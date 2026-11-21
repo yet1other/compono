@@ -33,9 +33,9 @@ impl Component for Counter {
 
 ## Status
 
-Release candidate 1.0.0-rc, published for testing in projects: the crates on
+Release candidate 1.0.0-rc.2, published for testing in projects: the crates on
 crates.io, the Compose library on Maven Central, and the Swift package by this
-repository's URL at tag `v1.0.0-rc`.
+repository's URL at tag `v1.0.0-rc.2`.
 `CHANGELOG.md` lists what it contains, `VERSIONING.md` says what a version number
 promises, and the minimum Rust version is 1.96. The core and the egui, iced and GPUI
 adapters work on desktop, where state is saved to a file and the system's Back
@@ -53,21 +53,21 @@ toolkits are, so a toolkit release never forces a new major version of the core
 
 ```toml
 [dependencies]
-compono = "=1.0.0-rc"
-compono-ffi = "=1.0.0-rc"  # for SwiftUI or Compose
-compono-egui = "=0.1.0-rc" # or compono-iced, compono-gpui
+compono = "=1.0.0-rc.2"
+compono-ffi = "=1.0.0-rc.2"  # for SwiftUI or Compose
+compono-egui = "=0.1.0-rc.2" # or compono-iced, compono-gpui
 ```
 
 A Swift application adds the package by URL:
 
 ```swift
-.package(url: "https://github.com/yet1other/compono", exact: "1.0.0-rc")
+.package(url: "https://github.com/yet1other/compono", exact: "1.0.0-rc.2")
 ```
 
 An Android application adds the Compose library from Maven Central:
 
 ```kotlin
-implementation("io.github.yet1other:compono:1.0.0-rc")
+implementation("io.github.yet1other:compono:1.0.0-rc.2")
 ```
 
 The group was `io.github.yet300` until the repository moved. The artifact

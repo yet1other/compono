@@ -69,8 +69,11 @@ Versioning has it for `0.x`. An adapter reaches `1.0.0` only after its toolkit d
    version.
 4. Publish the core crates in dependency order (`compono-motion`, `compono`,
    `compono-test`, `compono-desktop`, `compono-tokio`, `compono-web`,
-   `compono-ffi`), then the adapters. `cargo publish --dry-run -p <crate>` shows
-   the version each will take.
+   `compono-ffi`), then the adapters. `cargo publish --workspace --dry-run`
+   packages and verifies all of them in that order and shows the version each
+   will take; `cargo publish --workspace` publishes them. A dry run of one crate
+   with `-p` fails while the new versions of its dependencies are not yet on
+   crates.io.
 5. Once the adapters' `0.1.0` is published, yank their `1.0.0-rc` on crates.io,
    which was published before they had versions of their own:
    `cargo yank compono-egui@1.0.0-rc`, then the same for `compono-iced` and
