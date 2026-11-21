@@ -3,7 +3,7 @@
 The core crates share one version, and the egui, iced and GPUI adapters have their
 own. `VERSIONING.md` says what a version number promises.
 
-## Unreleased
+## 1.0.0-rc.2
 
 Fixes from the review of `1.0.0-rc`. Each entry names the review's ID.
 

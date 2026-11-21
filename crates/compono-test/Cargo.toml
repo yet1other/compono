@@ -11,7 +11,7 @@ keywords = ["compono", "testing", "ui", "navigation"]
 categories = ["development-tools::testing", "gui"]
 
 [dependencies]
-compono = { version = "1.0.0-rc", path = "../compono" }
+compono = { version = "1.0.0-rc.2", path = "../compono" }
 
 [dev-dependencies]
 

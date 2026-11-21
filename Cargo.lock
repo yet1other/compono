@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "compono"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "hashbrown 0.17.1",
  "loom",
@@ -1319,14 +1319,14 @@ dependencies = [
 
 [[package]]
 name = "compono-desktop"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
 ]
 
 [[package]]
 name = "compono-egui"
-version = "0.1.0-rc"
+version = "0.1.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "compono-ffi"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-test",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "compono-gpui"
-version = "0.1.0-rc"
+version = "0.1.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "compono-iced"
-version = "0.1.0-rc"
+version = "0.1.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1367,21 +1367,21 @@ dependencies = [
 
 [[package]]
 name = "compono-motion"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "compono-test"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
 ]
 
 [[package]]
 name = "compono-tokio"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "tokio",
@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "compono-web"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "js-sys",
@@ -7912,7 +7912,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "showcase"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-test",
@@ -7921,7 +7921,7 @@ dependencies = [
 
 [[package]]
 name = "showcase-egui"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -7938,7 +7938,7 @@ dependencies = [
 
 [[package]]
 name = "showcase-gpui"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -7951,7 +7951,7 @@ dependencies = [
 
 [[package]]
 name = "showcase-iced"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -7968,7 +7968,7 @@ dependencies = [
 
 [[package]]
 name = "showcase-web"
-version = "1.0.0-rc"
+version = "1.0.0-rc.2"
 dependencies = [
  "compono",
  "compono-web",

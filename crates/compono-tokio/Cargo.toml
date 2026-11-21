@@ -11,7 +11,7 @@ keywords = ["compono", "tokio", "async", "ui"]
 categories = ["gui", "asynchronous"]
 
 [dependencies]
-compono = { version = "1.0.0-rc", path = "../compono" }
+compono = { version = "1.0.0-rc.2", path = "../compono" }
 tokio = { version = "1", default-features = false, features = ["rt"] }
 
 [dev-dependencies]
