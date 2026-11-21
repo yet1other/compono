@@ -4,7 +4,7 @@
 set -u
 cd "${0:A:h}"
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
-(cd rust && cargo build --release 2>&1 | tail -1)
+(cd rust && cargo build --release --locked 2>&1 | tail -1)
 limit 300 rust/target/release/compare > out/compono-host.txt; echo "compono host: $?"
 cd kotlin
 limit 500 $GRADLE --no-daemon -q --console=plain :kmp:linkReleaseExecutableMacosArm64 :kmp:linkReleaseExecutableIosSimulatorArm64 :kmp:jvmJar

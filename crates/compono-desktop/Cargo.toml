@@ -12,5 +12,8 @@ categories = ["gui", "filesystem"]
 
 [dependencies]
 
+[dev-dependencies]
+compono = { version = "1.0.0-rc", path = "../compono" }
+
 [lints]
 workspace = true

@@ -248,3 +248,23 @@ fn a_poll_limit_of_zero_polls_one_task() {
     tree.pump().unwrap();
     assert_eq!(polls.get(), 1);
 }
+
+#[test]
+fn send_at_the_limit_returns_ok_and_the_next_pumps_finish_the_work() {
+    // 4-6: `Ok` means the message was delivered, not that all it causes is done.
+    let host = Counting::default();
+    // One message, then five round trips: eleven pieces of work.
+    let (mut tree, parent, echo) = ping_pong(&host, 5);
+    tree.set_work_limit(4);
+    let wakes = host.wakes();
+    assert_eq!(tree.send(echo, ()), Ok(()));
+    assert_eq!(heard(&tree, parent), 2, "four pieces of work are done");
+    assert_eq!(host.wakes(), wakes + 1, "the host is woken once");
+    let mut pumps = 0;
+    while heard(&tree, parent) < 5 {
+        tree.pump().unwrap();
+        pumps += 1;
+        assert!(pumps < 10, "the rest is never finished");
+    }
+    assert_eq!(heard(&tree, parent), 5);
+}

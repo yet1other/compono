@@ -329,8 +329,23 @@ fn a_tree_whose_call_panicked_answers_poisoned() {
 
     assert_eq!(tree.pump(), Err(NativeError::Poisoned));
     assert_eq!(tree.send::<Bomb>(bomb, ()), Err(NativeError::Poisoned));
-    assert!(
-        tree.read(|tree| tree.is_poisoned()).unwrap(),
-        "reads still work"
+    // 2-1: a half-changed tree is neither read nor saved over the last good state.
+    assert_eq!(tree.read(|_tree| ()), Err(NativeError::Poisoned));
+    assert_eq!(tree.save(1), Err(NativeError::Poisoned));
+}
+
+#[test]
+fn an_address_from_one_native_tree_is_gone_in_another() {
+    // 4-1: two trees whose first components share a slot and a generation.
+    let (_alice_ui, alice, alices) = setup();
+    let (_bob_ui, bob, bobs) = setup();
+    assert_eq!(bob.send::<Counter>(alices, 40), Err(NativeError::Gone));
+    assert_eq!(count(&bob, alices), Err(NativeError::Gone));
+    assert_eq!(
+        bob.with(|tree| tree.contains(NodeId::from_bits(alices))),
+        Ok(false)
     );
+    assert_eq!(count(&bob, bobs), Ok(0), "bob's component changed");
+    assert_eq!(alice.send::<Counter>(alices, 40), Ok(()));
+    assert_eq!(count(&alice, alices), Ok(40));
 }

@@ -1,5 +1,5 @@
 mod context;
-mod handle;
+pub(crate) mod handle;
 pub(crate) mod node;
 mod phase;
 

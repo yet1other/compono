@@ -10,6 +10,7 @@ const FADE_THROUGH: f32 = 0.35;
 
 /// How the entries of a router move during a transition.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum Transition {
     /// The front entry slides in from the right edge and out to it. The back entry
     /// moves `parallax` of the width to the left and is dimmed by up to `dim`.

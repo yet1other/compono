@@ -39,6 +39,23 @@ private final class OwningBridge: TreeBridge {
     func save() -> Data { Data() }
 }
 
+private struct Refused: Error {}
+
+/// Bindings whose every call is refused, as a poisoned tree refuses them.
+@MainActor
+private final class RefusingBridge: TreeBridge {
+    nonisolated(unsafe) static var collected = 0
+    func pump() throws { throw Refused() }
+    func setPhase(code: Int32) throws { throw Refused() }
+    func back() throws -> Bool { throw Refused() }
+    func backStart() throws -> Int64 { throw Refused() }
+    func backCancel() throws { throw Refused() }
+    func backCommit() throws -> Bool { throw Refused() }
+    func contains(node: Int64) throws -> Bool { throw Refused() }
+    func save() throws -> Data { throw Refused() }
+    static func collectRetired() { collected += 1 }
+}
+
 @MainActor
 private func fires(_ body: () -> Void, after change: () -> Void) -> Bool {
     final class Flag: @unchecked Sendable { var fired = false }
@@ -201,5 +218,79 @@ final class ComponoRootTests: XCTestCase {
         let root = ComponoRoot(stateFile: nil) { _, _ in FakeBridge() }
         root.tree.commit(dirty: [], canBack: true)
         XCTAssertTrue(root.tree.canBack)
+    }
+
+    func testAnEmptySaveKeepsTheLastGoodStateFile() throws {
+        // 2-1: a poisoned tree saves nothing, and its empty data replaces nothing.
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "compono-\(UUID().uuidString).state")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let root = ComponoRoot(stateFile: file) { _, _ in FakeBridge() }
+        root.persist(Data([1, 2]))
+        root.persist(Data())
+        XCTAssertEqual(try Data(contentsOf: file), Data([1, 2]))
+    }
+
+    func testTheTreeTakesTheHighestPhaseOfAllScenes() {
+        // 6-2: two iPad windows share the one tree.
+        let tree = ComponoTree()
+        let bridge = FakeBridge()
+        tree.attach(bridge)
+        let (left, right) = (UUID(), UUID())
+        let orders: [[(UUID, Int32)]] = [
+            [(left, 2), (right, 2), (right, 0)],
+            [(left, 2), (right, 1), (left, 0)],
+            [(right, 0), (left, 1), (right, 2), (right, 0)],
+        ]
+        for order in orders {
+            var phases: [UUID: Int32] = [:]
+            for (scene, code) in order {
+                phases[scene] = code
+                tree.setScenePhase(code, for: scene)
+                XCTAssertEqual(bridge.phases.last, phases.values.max(), "after \(order)")
+            }
+            tree.removeScene(left)
+            tree.removeScene(right)
+            XCTAssertEqual(bridge.phases.last, 0, "no scene is left")
+        }
+    }
+
+    func testADisconnectedSceneNoLongerHoldsTheTreeUp() {
+        let tree = ComponoTree()
+        let bridge = FakeBridge()
+        tree.attach(bridge)
+        let (left, right) = (UUID(), UUID())
+        tree.setScenePhase(0, for: left)
+        tree.setScenePhase(2, for: right)
+        tree.removeScene(right)
+        XCTAssertEqual(bridge.phases.last, 0)
+    }
+
+    func testAThrownErrorIsLoggedAndAnsweredAsNoTree() {
+        // 6-3: the kind of a NativeError arrives as a thrown error.
+        let tree = ComponoTree()
+        let bridge = RefusingBridge()
+        tree.attach(bridge)
+        XCTAssertFalse(tree.back())
+        XCTAssertFalse(tree.beginGesture())
+        XCTAssertEqual(tree.save(), Data())
+        tree.setPhase(2)
+    }
+
+    func testEveryPumpCollectsRetiredTreesEvenWithoutBindings() async {
+        // 6-4: a tree released on another thread is freed on the main thread.
+        let tree = ComponoTree()
+        var bridge: RefusingBridge? = RefusingBridge()
+        tree.attach(bridge!)
+        let before = RefusingBridge.collected
+        tree.requestPump()
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(RefusingBridge.collected, before + 1)
+        bridge = nil
+        tree.requestPump()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(RefusingBridge.collected, before + 2)
+        _ = bridge
     }
 }

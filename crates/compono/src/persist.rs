@@ -1,5 +1,5 @@
 use crate::component::node::Node;
-use crate::saved_key::is_unsaved_entry;
+use crate::saved_key::{self, is_unsaved_entry};
 use crate::tree::Tree;
 use crate::{Component, Cx, Handle, NodeId};
 use alloc::collections::BTreeMap;
@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) type Saver = fn(&dyn Node) -> Result<SavedEntry, SaveError>;
 
-/// The format of the bytes [`Tree::save`] writes. Bytes of any other format
-/// start clean.
-const FORMAT: u32 = 0x00c0_0002;
+/// The format of the bytes [`Tree::save`] writes. Bytes of [`LEGACY_FORMAT`]
+/// are read too; bytes of any other format start clean.
+const FORMAT: u32 = 0x00c0_0003;
+/// The format of `1.0.0-rc`, whose entries carry no [`SavedEntry::unclaimed`].
+const LEGACY_FORMAT: u32 = 0x00c0_0002;
 
 /// One component's saved state, tagged with what saved it.
 #[derive(Clone, Serialize, Deserialize)]
@@ -23,6 +25,25 @@ pub(crate) struct SavedEntry {
     /// The saving component's [`Persist::VERSION`].
     version: u32,
     bytes: Vec<u8>,
+    /// Whether the entry went through a whole run, from one restore to the
+    /// save, without anything claiming it. Such an entry is dropped at the next
+    /// run's save if nothing claims it there either (5-4).
+    unclaimed: bool,
+}
+
+/// An entry as `1.0.0-rc` wrote it.
+#[derive(Deserialize)]
+struct LegacyEntry {
+    kind: u64,
+    version: u32,
+    bytes: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+struct LegacyEnvelope {
+    format: u32,
+    schema: u32,
+    nodes: Vec<(Vec<u64>, LegacyEntry)>,
 }
 
 /// The FNV-1a hash of a kind, or 0 for a component that names none.
@@ -69,6 +90,7 @@ fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
 ///
 /// impl Persist for Note {
 ///     type Saved = String;
+///     const KIND: &'static str = "persist.note";
 ///     fn save(&self) -> String {
 ///         self.text.clone()
 ///     }
@@ -88,6 +110,7 @@ fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Option<T> {
 ///
 /// impl Persist for Notes {
 ///     type Saved = SavedStack<u32>;
+///     const KIND: &'static str = "persist.notes";
 ///     fn save(&self) -> SavedStack<u32> {
 ///         self.stack.snapshot()
 ///     }
@@ -139,11 +162,36 @@ pub trait Persist: Component {
     /// in the application, such as `"notes.editor"`.
     ///
     /// Saved state records it, and [`Cx::restored`] gives `None` for state that
-    /// a component of another kind saved at the same place. The default, an
-    /// empty name, checks no kind, and such a component reads whatever was saved
-    /// at its place. Giving a component a kind later discards the state it saved
-    /// without one.
-    const KIND: &'static str = "";
+    /// a component of another kind saved at the same place, so the component
+    /// starts fresh. Every implementation names one, and an empty name is
+    /// refused when the component is created as a persistent one:
+    ///
+    /// ```compile_fail,E0080
+    /// use compono::{Component, Cx, Persist};
+    ///
+    /// struct Unnamed;
+    /// impl Component for Unnamed {
+    ///     type Msg = ();
+    ///     type Output = ();
+    ///     fn update(&mut self, (): (), _cx: &mut Cx<'_, Self>) {}
+    /// }
+    /// impl Persist for Unnamed {
+    ///     type Saved = ();
+    ///     const KIND: &'static str = "";
+    ///     fn save(&self) {}
+    /// }
+    ///
+    /// struct Quiet;
+    /// impl compono::Host for Quiet {
+    ///     fn commit(&mut self, _commit: &compono::Commit<'_>) {}
+    /// }
+    ///
+    /// let mut tree = compono::Tree::new(Quiet);
+    /// tree.mount_persistent(|_cx| Unnamed);
+    /// ```
+    ///
+    /// The check runs when the code is built, not by `cargo check`.
+    const KIND: &'static str;
 
     /// The version of [`Persist::Saved`]. Raise it when `Saved` changes shape,
     /// and read the older shapes in [`Persist::migrate`].
@@ -164,13 +212,23 @@ pub trait Persist: Component {
     }
 }
 
-/// The tree could not be encoded.
+/// The tree could not be saved. Keep the last bytes that were saved instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SaveError;
+#[non_exhaustive]
+pub enum SaveError {
+    /// A component's state could not be encoded.
+    Encode,
+    /// An operation on the tree unwound, so its state may be half-changed (see
+    /// [`Tree::is_poisoned`]). No [`Persist::save`] ran.
+    Poisoned,
+}
 
 impl fmt::Display for SaveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("component state could not be encoded")
+        f.write_str(match self {
+            Self::Encode => "component state could not be encoded",
+            Self::Poisoned => "the tree is poisoned, so its state was not saved",
+        })
     }
 }
 impl core::error::Error for SaveError {}
@@ -194,13 +252,48 @@ struct Envelope {
     nodes: Vec<(Vec<u64>, SavedEntry)>,
 }
 
+/// Reads bytes of [`LEGACY_FORMAT`], whose entries all count as claimed.
+fn decode_legacy(bytes: &[u8]) -> Option<Envelope> {
+    let legacy = decode_exact::<LegacyEnvelope>(bytes).filter(|old| old.format == LEGACY_FORMAT)?;
+    let nodes = legacy
+        .nodes
+        .into_iter()
+        .map(|(path, entry)| {
+            let LegacyEntry {
+                kind,
+                version,
+                bytes,
+            } = entry;
+            let entry = SavedEntry {
+                kind,
+                version,
+                bytes,
+                unclaimed: false,
+            };
+            (path, entry)
+        })
+        .collect();
+    Some(Envelope {
+        format: FORMAT,
+        schema: legacy.schema,
+        nodes,
+    })
+}
+
+/// Refuses, when it compiles, a component whose saved state names no kind (4-4).
+const fn assert_kind<K: Persist>() {
+    const { assert!(!K::KIND.is_empty(), "Persist::KIND must not be empty") }
+}
+
 fn save_node<K: Persist>(node: &dyn Node) -> Result<SavedEntry, SaveError> {
-    let value = node.as_any().downcast_ref::<K>().ok_or(SaveError)?;
-    let bytes = postcard::to_allocvec(&value.save()).map_err(|_error| SaveError)?;
+    assert_kind::<K>();
+    let value = node.as_any().downcast_ref::<K>().ok_or(SaveError::Encode)?;
+    let bytes = postcard::to_allocvec(&value.save()).map_err(|_error| SaveError::Encode)?;
     Ok(SavedEntry {
         kind: kind_hash(K::KIND),
         version: K::VERSION,
         bytes,
+        unclaimed: false,
     })
 }
 
@@ -213,8 +306,11 @@ impl Tree {
         schema: u32,
     ) -> (Self, RestoreOutcome) {
         let mut tree = Self::new(host);
-        let outcome = match decode_exact::<Envelope>(bytes) {
-            Some(envelope) if envelope.format == FORMAT && envelope.schema == schema => {
+        let decoded = decode_exact::<Envelope>(bytes)
+            .filter(|envelope| envelope.format == FORMAT)
+            .or_else(|| decode_legacy(bytes));
+        let outcome = match decoded {
+            Some(envelope) if envelope.schema == schema => {
                 tree.restored = envelope.nodes.into_iter().collect::<BTreeMap<_, _>>();
                 RestoreOutcome::Restored
             }
@@ -226,28 +322,99 @@ impl Tree {
 
     /// Encodes every persistent component into one flat buffer.
     ///
-    /// State restored for entries that were never rebuilt is carried forward.
+    /// State restored for an entry that was not rebuilt yet is carried forward
+    /// while something live can still claim it: the component at its path, or a
+    /// router of the deepest live component on its path, such as a stack that
+    /// rebuilds a lower entry only when it is shown. State nothing live can claim
+    /// is carried forward through one whole run, from one restore to the next, so
+    /// a child created late in a run still finds it; it is marked, and dropped at
+    /// the next run's save if nothing claims it there either (5-4). Before
+    /// anything is mounted, all of it is carried forward unchanged.
     ///
     /// # Errors
     ///
-    /// Returns [`SaveError`] if a component cannot be encoded.
+    /// Returns [`SaveError::Encode`] if a component cannot be encoded, and
+    /// [`SaveError::Poisoned`], without running any [`Persist::save`], if the tree
+    /// is poisoned. Either way, keep the bytes saved before.
     pub fn save(&self, schema: u32) -> Result<Vec<u8>, SaveError> {
+        if self.is_poisoned() {
+            return Err(SaveError::Poisoned);
+        }
         let mut nodes = BTreeMap::new();
-        for (path, entry) in &self.restored {
-            nodes.insert(path.clone(), entry.clone());
-        }
-        if let Some(root) = self.root {
-            self.save_subtree(root, &mut nodes)?;
-        }
-        let envelope = Envelope {
-            format: FORMAT,
-            schema,
-            nodes: nodes.into_iter().collect(),
+        let Some(root) = self.root else {
+            nodes.extend(
+                self.restored
+                    .iter()
+                    .map(|(path, entry)| (path.clone(), entry.clone())),
+            );
+            return encode(schema, nodes);
         };
-        postcard::to_allocvec(&envelope).map_err(|_error| SaveError)
+        let mut live = (!self.restored.is_empty()).then(BTreeMap::new);
+        self.save_subtree(root, &mut nodes, live.as_mut())?;
+        if let Some(live) = &live {
+            for (path, entry) in &self.restored {
+                if nodes.contains_key(path) {
+                    continue;
+                }
+                let claimable = self.claimable(path, live);
+                // Unclaimed through the whole run before this one, and still.
+                if entry.unclaimed && !claimable {
+                    continue;
+                }
+                let mut entry = entry.clone();
+                entry.unclaimed = !claimable;
+                nodes.insert(path.clone(), entry);
+            }
+        }
+        encode(schema, nodes)
     }
 
-    /// Saves a component and everything below it.
+    /// Returns whether restored state at `path` can still be claimed: by the live
+    /// component at `path`, or by a live router of the deepest live component on
+    /// it, under one of whose entries `path` lies.
+    fn claimable(&self, path: &[u64], live: &BTreeMap<Vec<u64>, NodeId>) -> bool {
+        for depth in (1..=path.len()).rev() {
+            let Some((owner, rest)) = path
+                .split_at_checked(depth)
+                .and_then(|(prefix, rest)| Some((*live.get(prefix)?, rest)))
+            else {
+                continue;
+            };
+            return match rest.first() {
+                None => true,
+                Some(key) => self.has_router_for(owner, *key),
+            };
+        }
+        false
+    }
+
+    /// Returns whether `owner` still has the router whose entry has saved `key`.
+    fn has_router_for(&self, owner: NodeId, key: u64) -> bool {
+        match saved_key::router_of(key) {
+            Some(saved_key::RouterOf::Numbered(number)) => self
+                .slot(owner)
+                .is_some_and(|slot| number < slot.next_router),
+            Some(saved_key::RouterOf::Named(base)) => self
+                .router_names
+                .get(&owner)
+                .is_some_and(|names| names.contains(&base)),
+            None => false,
+        }
+    }
+}
+
+fn encode(schema: u32, nodes: BTreeMap<Vec<u64>, SavedEntry>) -> Result<Vec<u8>, SaveError> {
+    let envelope = Envelope {
+        format: FORMAT,
+        schema,
+        nodes: nodes.into_iter().collect(),
+    };
+    postcard::to_allocvec(&envelope).map_err(|_error| SaveError::Encode)
+}
+
+impl Tree {
+    /// Saves a component and everything below it, and records in `live` the path
+    /// of every component it passes.
     ///
     /// The walk uses the tree's own links and no call stack, so its depth is not
     /// limited.
@@ -255,13 +422,15 @@ impl Tree {
         &self,
         root: NodeId,
         nodes: &mut BTreeMap<Vec<u64>, SavedEntry>,
+        mut live: Option<&mut BTreeMap<Vec<u64>, NodeId>>,
     ) -> Result<(), SaveError> {
         let mut path = Vec::new();
         let mut cursor = root;
         // Entries of dropped routers that a work limit left for a later
         // operation. They are on their way out, and the router that replaced
-        // them may already save under the same keys.
-        let leaving = self.leaving();
+        // them may already save under the same keys. A set, because a large
+        // router dropped at once can leave many (3-5).
+        let leaving: hashbrown::HashSet<NodeId> = self.leaving().into_iter().collect();
         loop {
             let Some(slot) = self.slot(cursor) else {
                 return Ok(());
@@ -272,6 +441,9 @@ impl Tree {
             let saved = !is_unsaved_entry(slot.key) && !leaving.contains(&cursor);
             if saved && let (Some(saver), Some(node)) = (slot.saver, slot.node.as_ref()) {
                 nodes.insert(path.clone(), saver(node.as_ref())?);
+            }
+            if saved && let Some(live) = live.as_deref_mut() {
+                live.insert(path.clone(), cursor);
             }
             if saved && let Some(child) = slot.first_child {
                 cursor = child;
@@ -369,6 +541,7 @@ impl Tree {
         &mut self,
         init: impl FnOnce(&mut Cx<'_, K>) -> K,
     ) -> Handle<K> {
+        assert_kind::<K>();
         self.operate(Handle::new(crate::NodeId::NONE), |tree| {
             let handle = tree.mount_now(init);
             if let Some(slot) = tree.slot_mut(handle.id()) {
@@ -416,6 +589,7 @@ impl<C: Component> Cx<'_, C> {
     ///
     /// impl Persist for Draft {
     ///     type Saved = String;
+    ///     const KIND: &'static str = "persist.draft";
     ///     fn save(&self) -> String {
     ///         self.0.clone()
     ///     }
@@ -433,6 +607,7 @@ impl<C: Component> Cx<'_, C> {
     ///
     /// impl Persist for Editor {
     ///     type Saved = ();
+    ///     const KIND: &'static str = "persist.editor";
     ///     fn save(&self) {}
     /// }
     ///
@@ -477,6 +652,7 @@ impl<C: Component> Cx<'_, C> {
         init: impl FnOnce(&mut Cx<'_, K>) -> K,
         on_output: impl Fn(&mut C, K::Output, &mut Cx<'_, C>) + 'static,
     ) -> Handle<K> {
+        assert_kind::<K>();
         let handle = self.child_named(name, init, on_output);
         if let Some(slot) = self.tree.slot_mut(handle.id()) {
             slot.saver = Some(save_node::<K>);
@@ -497,7 +673,8 @@ impl<C: Persist> Cx<'_, C> {
         }
         let path = self.tree.path_of(self.me);
         let entry = self.tree.restored.remove(&path)?;
-        if !C::KIND.is_empty() && entry.kind != kind_hash(C::KIND) {
+        assert_kind::<C>();
+        if entry.kind != kind_hash(C::KIND) {
             return None;
         }
         if entry.version == C::VERSION {

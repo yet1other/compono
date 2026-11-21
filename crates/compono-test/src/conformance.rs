@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 /// A contract the host under test broke.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Violation {
     /// The name of the failed check.
     pub check: &'static str,
@@ -116,6 +117,7 @@ impl Component for Parent {
 
 impl Persist for Parent {
     type Saved = u32;
+    const KIND: &'static str = "src.parent";
 
     fn save(&self) -> u32 {
         self.value

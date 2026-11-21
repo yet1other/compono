@@ -79,15 +79,23 @@ parent knows what to pass, and the child declares what it requires.
 | Remove a child | `cx.destroy(handle)`. Anything but its own live children is refused with `NotOwnChild` |
 | Say the UI need not change | `cx.unchanged()` |
 | Read its own phase | `cx.phase()` |
-| Lower a child's phase | `cx.set_child_phase(handle, phase)`, refused with `NotOwnChild` as `destroy` is |
+| Lower a child's phase | `cx.set_child_phase(handle, phase)` returns the phase the child now has, never above the parent's; refused with `NotOwnChild` as `destroy` is |
 | Work on another thread | `cx.sender()` or `cx.perform(future, to_msg)` |
 | Cancel one task | `cx.cancel(task_id)` |
 
-`Handle<C>` is 8 bytes, asserted at compile time, and `Copy + Send + Sync`. So is
-`Option<NodeId>`: the generation is kept plus one in a `NonZeroU32`, so the tree's
-links to parents, children and siblings cost no extra bytes. After its component is
-removed it is stale: reading gives `None`, sending gives `Err(StaleHandle)`. A
-reused slot does not revive old handles, because each slot has a generation.
+`Handle<C>` is 8 bytes, asserted at compile time, and `Copy + Send + Sync`. So are
+`NodeId` and `Option<NodeId>`: an address packs the identity of its tree (12 bits),
+the slot's generation (24 bits) and the slot's index (28 bits) into one non-zero
+`u64`, so the tree's links to parents, children and siblings cost no extra bytes.
+After its component is removed it is stale: reading gives `None`, sending gives
+`Err(StaleHandle)`. A reused slot does not revive old handles, because each slot
+has a generation, and a slot retires instead of reaching its 16 777 215th. An
+address from one tree is stale in every other, because no two live trees have the
+same identity. Identities come from a bitmap of those in use, claimed after a
+shared counter, so 4 094 trees can be alive at once; a tree made while all are in
+use is poisoned from the start (`Tree::is_poisoned`), and an identity is reused only
+after its tree is dropped and the counter has passed every other one. A tree holds
+at most 268 435 454 components at once.
 
 ## Execution
 
@@ -99,6 +107,12 @@ Every external operation (`send`, `set_phase`, `back`, `pump`) ends in one
 3. When it returns it goes back in its slot, and the queue is processed.
 4. The host receives a `Commit` listing each changed component once. Components
    removed during the operation are not listed.
+
+Every output a child emits reaches its parent, in the order emitted, even when the
+child is removed before the queue gets to it: removal hands the child's queued
+outputs to the parent's route in place. So "save, then close" loses no save. An
+output is dropped only when the parent is removed too. A message queued for a
+component that is removed before delivery is dropped.
 
 One operation does at most `Tree::set_work_limit` units of work, 1 048 576 by
 default, so components that keep answering each other, or that drop large routers,
@@ -129,8 +143,11 @@ Panics in user code are not caught, except in a task started with `Cx::perform`,
 whose panic stops at the task. Applications should use `panic = "abort"`. If
 something catches the unwind anyway, the operation it interrupted never finished,
 and the tree is poisoned (`Tree::is_poisoned`): it runs no more user code and
-commits nothing, while reads and dropping still work. `NativeTree` then answers
-`NativeError::Poisoned`. The library cannot rule out out-of-memory. Its own walks over the tree, for phases,
+commits nothing, while reads and dropping still work. Dropping it tells no
+component it is hidden. `Tree::save` returns `SaveError::Poisoned` without calling
+any `Persist::save`, so the platform crates and native packages keep the last
+state they saved instead of a half-changed one. `NativeTree` answers
+`NativeError::Poisoned` to every call, reads and saves included. The library cannot rule out out-of-memory. Its own walks over the tree, for phases,
 removal, Back and saving, follow the tree's links and do not recurse, so the depth of
 a tree is limited only by the constructors that build it.
 
@@ -299,7 +316,11 @@ check the whole list. `Items` checks only the keys inside its window.
 `push`, `pop` and `replace` are `O(1)` and never compare routes. Operations that
 look for an equal route need `R: PartialEq` and are linear in stack depth. Reconciling a
 `ChildSet` is expected `O(n)` in the child count, and an unchanged key list
-allocates nothing beyond collecting the input.
+allocates nothing beyond collecting the input. The cost is that of the whole list,
+not of the change: `reconcile` takes the full desired list, so one added row in a
+set of 500 000 costs about 16 ms (`set_scaling`). Point operations that cost only
+what they change are not part of `ChildSet` yet; a long list that changes a row at
+a time belongs in `Items`.
 
 Animations live in the UI, driven by its frame clock.
 
@@ -383,7 +404,9 @@ cx.perform(load_scores(repo), Msg::Loaded)?;
 The result arrives as an ordinary message. A finished task's guard is released when
 its message is delivered, so a timer loop does not accumulate state. A task whose
 future or `to_msg` panics, in a build that unwinds, reports that it ended without a
-message: the next pump releases its guard and delivers nothing. When a
+message: the next pump releases its guard and delivers nothing. A task that its
+executor drops before it finishes, as at the shutdown of a runtime, reports the
+same way from the drop of its future, waking the host once. When a
 component is removed its guards are dropped, and a late result is discarded because
 its generation is stale.
 
@@ -416,7 +439,7 @@ drops the future, and its result is never delivered.
 ```rust
 pub trait Persist: Component {
     type Saved: Serialize + DeserializeOwned;
-    const KIND: &'static str = "";
+    const KIND: &'static str; // required, and never empty
     const VERSION: u32 = 0;
     fn save(&self) -> Self::Saved;
     fn migrate(version: u32, bytes: &[u8]) -> Option<Self::Saved> { None }
@@ -428,14 +451,27 @@ pub trait Persist: Component {
   Each entry records the FNV-1a hash of its component's `KIND` and its `VERSION`,
   inline beside its bytes, so the tag allocates nothing. `cx.restored()` gives
   `None` for state of another kind and for bytes left after the value, and passes
-  state of another version to `migrate`. An empty `KIND` checks no kind.
+  state of another version to `migrate`. Every implementation names its `KIND`,
+  and an empty one fails to build where the component is made persistent, so a
+  child built in another order than the one that saved starts fresh instead of
+  reading another type's bytes.
 - `Tree::with_saved` starts clean on a different schema or corrupt bytes and returns
   a `RestoreOutcome`. The envelope begins with a format number, so bytes written
   before entries were tagged start clean too.
 - Only the active component is created on restore. Lower stack entries are created
   when returned to, so startup depends on the screen, not on history.
-- State of entries not yet rebuilt is carried into the next save, until the entry is
-  removed. `ChildSet::forget` does this for a key the set is still waiting for.
+- State of entries not yet rebuilt is carried into the next save while something
+  live can still claim it: the component at its path, or a router of the deepest
+  live component on its path, under one of whose entries it lies. A router that
+  restores keeps only its snapshot's entries (`cx.keep_router_entries`), and
+  `ChildSet::forget` drops a key the set is still waiting for. Any other entry,
+  such as the state of a component this version no longer builds or of a child a
+  run has not created yet, is carried through one whole run, from one restore to
+  the next, with a mark. If nothing claims it in the next run either, that run's
+  save drops it. So a child created late in a run, even after a save, still gets
+  its state, and saved state does not grow with what earlier versions saved.
+- The envelope's format is `0x00c0_0003`, whose entries carry that mark. Bytes of
+  `1.0.0-rc` (`0x00c0_0002`) are still read, with every entry unmarked.
 - Every router has a saved form: `SavedStack`, `SavedSlot`, `SavedPages`,
   `SavedPanels`, `SavedItems` and `SavedChildSet`. The owner returns it from `save`
   and passes it back to `restore` or `restore_or`. `Items` saves its window and the
@@ -487,8 +523,10 @@ Extension rules:
 ### Desktop
 
 `compono-desktop` knows no UI toolkit. `StateFile` keeps the bytes of `Tree::save` in
-the system's directory for application state and replaces them through a temporary
-file, so a crash during a save leaves the previous state. `Convention` names the
+the system's directory for application state. Each save writes a temporary file of
+its own, syncs it, renames it over the old one and syncs the directory (not on
+Windows), so a reader sees the old state or the new one whole, even with several
+writers, and a crash during a save leaves the previous state. `Convention` names the
 inputs that mean Back: Escape, a keyboard Back key and the mouse Back button
 everywhere, Command-[ and Command-Left on macOS, and Alt-Left elsewhere. The adapters
 translate their own events with `back_requested` (egui), `back_requests` (iced) and
@@ -537,8 +575,8 @@ needs a server that answers every path with the page.
 
 | Tier | Platforms | State today |
 |---|---|---|
-| Goal: supported and verified by running | Android, Apple, web/wasm, Linux, Windows, headless | Run on macOS desktop, in a browser and headless |
-| Core build checked | wasm32, Android, Windows, iOS, `thumbv7em` | `cargo check` of the core |
+| Goal: supported and verified by running | Android, Apple, web/wasm, Linux, Windows, headless | Run on macOS desktop, in a browser and headless. CI builds and tests the workspace on macOS and on Windows, GPUI's adapter left out on Windows, and the Swift package and Compose library's unit tests |
+| Core build checked | wasm32, Android, Windows, iOS, `thumbv7em` | CI checks `compono` and `compono-motion` for `thumbv7em`, and builds `compono-ffi` for `aarch64-linux-android` and `aarch64-apple-ios` |
 | Through the contract | FreeBSD, QNX, embedded Linux, Fuchsia, consoles | Not attempted |
 
 ## UI adapters
@@ -785,6 +823,11 @@ measured by hand with the examples in `crates/compono/examples`.
 - The cost of `Pages`, `Items`, `Panels` and `Slot` does not depend on the entries
   that are not on screen.
 - A push and pop cycle costs at most 3 allocations, including the component.
+- An output costs 1 allocation, and a message to a child that answers with an
+  output 2, because the queue boxes each payload of a type that is not empty.
+- Selecting a page that is built again costs at most 3 allocations, scrolling an
+  `Items` window by one row 4, and opening and closing a details panel or a dialog
+  that is already built 1.
 - An operation with no change causes no `Commit` and no allocation.
 - Pumping an empty queue does not allocate.
 - Startup after restore creates only visible components.

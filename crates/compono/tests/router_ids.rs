@@ -27,6 +27,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "router_ids.cell";
     fn save(&self) -> u32 {
         self.value
     }
@@ -78,6 +79,7 @@ impl Component for Owner {
 
 impl Persist for Owner {
     type Saved = Saved;
+    const KIND: &'static str = "router_ids.owner";
     fn save(&self) -> Saved {
         Saved {
             items: self.items.snapshot(),

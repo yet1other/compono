@@ -159,3 +159,147 @@ fn pumping_an_empty_queue_does_not_allocate() {
     tree.pump().unwrap();
     assert_eq!(allocations_in(|| tree.pump().unwrap()), 0);
 }
+
+// 3-3: budgets for the other routers, for outputs and for messages to children.
+
+mod routers {
+    use super::{NullHost, allocations_in};
+    use compono::router::items::Items;
+    use compono::router::pages::Pages;
+    use compono::router::panels::{PanelTypes, Panels, PanelsMode};
+    use compono::router::slot::Slot;
+    use compono::{Component, Cx, Handle, Phase, Tree};
+
+    /// Answers every message with an output. Both carry a value, as real ones do.
+    struct Leaf;
+    impl Component for Leaf {
+        type Msg = u32;
+        type Output = u32;
+        fn update(&mut self, value: u32, cx: &mut Cx<'_, Self>) {
+            cx.emit(value);
+        }
+    }
+
+    fn leaf<P: Component>(cx: &mut Cx<'_, P>) -> Handle<Leaf> {
+        cx.child(|_cx| Leaf, |_parent, _value, cx| cx.unchanged())
+    }
+
+    struct Three;
+    impl PanelTypes for Three {
+        type Main = u32;
+        type MainChild = Handle<Leaf>;
+        type Details = u32;
+        type DetailsChild = Handle<Leaf>;
+        type Extra = u32;
+        type ExtraChild = Handle<Leaf>;
+    }
+
+    pub(super) struct Root {
+        child: Handle<Leaf>,
+        pages: Pages<u32, Handle<Leaf>, Self>,
+        items: Items<u32, Handle<Leaf>, Self>,
+        panels: Panels<Three, Self>,
+        slot: Slot<u32, Handle<Leaf>, Self>,
+    }
+
+    pub(super) enum Msg {
+        Send,
+        Page(usize),
+        Scroll(usize),
+        Details,
+        Dialog,
+    }
+
+    impl Component for Root {
+        type Msg = Msg;
+        type Output = ();
+        fn update(&mut self, msg: Msg, cx: &mut Cx<'_, Self>) {
+            match msg {
+                Msg::Send => cx.send(self.child, 7).unwrap(),
+                Msg::Page(index) => {
+                    self.pages.select(index, cx);
+                }
+                Msg::Scroll(start) => {
+                    let _unique = self.items.set_window(start..start + 30, cx);
+                }
+                Msg::Details => {
+                    self.panels.set_details(Some(1), cx);
+                    self.panels.set_details(None, cx);
+                }
+                Msg::Dialog => {
+                    self.slot.show(1, cx);
+                    self.slot.close(cx);
+                }
+            }
+        }
+    }
+
+    pub(super) fn app() -> (Tree, Handle<Root>) {
+        let mut tree = Tree::new(NullHost);
+        tree.set_phase(Phase::Focused);
+        let root = tree.mount(|cx: &mut Cx<'_, Root>| Root {
+            child: leaf(cx),
+            pages: Pages::new((0..10).collect(), 0, 1, cx, |_route, cx| leaf(cx)).unwrap(),
+            items: Items::new((0..1000).collect(), cx, |_key, cx| leaf(cx)),
+            panels: Panels::new(
+                0,
+                PanelsMode::Dual,
+                cx,
+                |_route, cx| leaf(cx),
+                |_route, cx| leaf(cx),
+                |_route, cx| leaf(cx),
+            ),
+            slot: Slot::new(cx, |_route, cx| leaf(cx)),
+        });
+        (tree, root)
+    }
+
+    /// The fewest allocations of `rounds` runs of `msg`, after one to warm up.
+    pub(super) fn cost(msg: impl Fn(usize) -> Msg) -> u64 {
+        let (mut tree, root) = app();
+        tree.send(root, msg(0)).unwrap();
+        (1..20)
+            .map(|round| allocations_in(|| tree.send(root, msg(round)).unwrap()))
+            .min()
+            .unwrap()
+    }
+
+    /// The allocations of an output alone: a leaf that emits once.
+    pub(super) fn emit_cost() -> u64 {
+        let (mut tree, root) = app();
+        let child = tree.get(root).unwrap().child;
+        tree.send(child, 7).unwrap();
+        (0..20)
+            .map(|_| allocations_in(|| tree.send(child, 7).unwrap()))
+            .min()
+            .unwrap()
+    }
+}
+
+#[test]
+fn every_router_and_message_stays_within_its_budget() {
+    use routers::Msg;
+    let emit = routers::emit_cost();
+    // A message to a child, which answers with an output.
+    let send = routers::cost(|_| Msg::Send);
+    let page = routers::cost(|round| Msg::Page(round % 10));
+    let scroll = routers::cost(Msg::Scroll);
+    let details = routers::cost(|_| Msg::Details);
+    let dialog = routers::cost(|_| Msg::Dialog);
+    // An output and a message are each one box, since the queue erases their
+    // types; `send` here also carries the child's answer.
+    assert!(emit <= 1, "{emit} allocations per output");
+    assert!(send <= 2, "{send} allocations per message and its answer");
+    // A page shown again is built again: its node, its route and its scope.
+    assert!(page <= 3, "{page} allocations per page selected");
+    // One row in and one out of the window of 30.
+    assert!(scroll <= 4, "{scroll} allocations per row scrolled");
+    assert!(
+        details <= 1,
+        "{details} allocations per details panel opened and closed"
+    );
+    assert!(
+        dialog <= 1,
+        "{dialog} allocations per dialog shown and closed"
+    );
+}

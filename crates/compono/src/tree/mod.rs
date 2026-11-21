@@ -7,7 +7,9 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 
-pub(crate) type Route = Box<dyn Fn(&mut dyn Any, Box<dyn Any>, &mut Tree, NodeId)>;
+/// Delivers a child's output to its parent. Shared, so that outputs still queued
+/// when the child is removed can carry it (4-3).
+pub(crate) type Route = alloc::rc::Rc<dyn Fn(&mut dyn Any, Box<dyn Any>, &mut Tree, NodeId)>;
 
 /// The FNV-1a offset basis, where every hash starts.
 pub(crate) const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -28,12 +30,26 @@ pub(crate) const fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
 }
 
 pub(crate) enum Work {
-    Msg { to: NodeId, payload: Box<dyn Any> },
-    Output { from: NodeId, payload: Box<dyn Any> },
+    Msg {
+        to: NodeId,
+        payload: Box<dyn Any>,
+    },
+    Output {
+        from: NodeId,
+        payload: Box<dyn Any>,
+    },
+    /// An output of a child removed before it was delivered, still on its way to
+    /// the parent.
+    Orphan {
+        parent: NodeId,
+        route: Route,
+        payload: Box<dyn Any>,
+    },
 }
 
 mod back;
 mod execution;
+pub(crate) mod identity;
 mod lifecycle;
 mod links;
 mod node_slot;
@@ -47,6 +63,8 @@ use node_slot::OpenScope;
 /// A tree lives on the thread that created it, as a React tree does. Other
 /// threads reach it through [`Sender`](crate::Sender).
 pub struct Tree {
+    /// Unique among live trees, and part of every address this tree issues.
+    identity: u32,
     pub(crate) slots: Vec<NodeSlot>,
     free: Vec<u32>,
     work: VecDeque<Work>,
@@ -66,7 +84,11 @@ pub struct Tree {
     scope: Option<OpenScope>,
     created: Vec<NodeId>,
     /// For each component, the bases of the router names it has given out.
-    router_names: hashbrown::HashMap<NodeId, Vec<u64>>,
+    pub(crate) router_names: hashbrown::HashMap<NodeId, Vec<u64>>,
+    /// The parent and key of every live named child, so a repeated name is found
+    /// without walking the siblings (3-1). It grows as a table does, by doubling,
+    /// not by one allocation per child.
+    named_children: hashbrown::HashSet<(NodeId, u64)>,
     /// The component whose router [`Cx::replace_router`] is destroying. Its
     /// entries' saved state stays for the router that replaces it.
     pub(crate) keeping_saved: Option<NodeId>,
@@ -91,12 +113,25 @@ pub struct Tree {
 
 impl Drop for Tree {
     /// Removes components as navigation does: children first, each told it is hidden.
+    ///
+    /// A poisoned tree tells no component anything, because that is user code
+    /// running on half-changed state. Its tasks still stop before the components
+    /// they belong to are dropped.
     fn drop(&mut self) {
-        if let Some(root) = self.root.take() {
+        // Everything goes now, so a scope dropped on the way asks for nothing.
+        self.graveyard.set_operating(true);
+        if self.running {
+            #[cfg(feature = "std")]
+            for slot in &mut self.slots {
+                drop(core::mem::take(&mut slot.tasks));
+                drop(core::mem::take(&mut slot.local));
+            }
+        } else if let Some(root) = self.root.take() {
             self.destroy(root);
         }
         #[cfg(feature = "std")]
         self.inbox.close();
+        identity::release(self.identity);
     }
 }
 
@@ -114,17 +149,26 @@ impl fmt::Debug for Tree {
 
 impl Tree {
     /// Creates an empty tree bound to `host`.
+    ///
+    /// Up to 4 094 trees can be alive at once in a process, because every
+    /// address names its tree. A tree made while all of them are taken has no
+    /// address of its own: it is poisoned from the start
+    /// ([`Tree::is_poisoned`] returns `true`), so it runs nothing and every call
+    /// on it says so. Dropping other trees frees identities for later trees.
     #[must_use]
     pub fn new(host: impl Host + 'static) -> Self {
         #[cfg(feature = "std")]
         let waker = host.waker();
+        let identity = identity::claim();
         Self {
+            identity,
             slots: Vec::new(),
             free: Vec::new(),
             work: VecDeque::new(),
             work_limit: execution::DEFAULT_WORK_LIMIT,
-            running: false,
-            graveyard: crate::router::scope::Graveyard::default(),
+            // A tree with no identity could address nothing it builds.
+            running: identity == identity::NONE,
+            graveyard: crate::router::scope::Grave::new(host.waker()),
             buried: Vec::new(),
             dirty: Vec::new(),
             root: None,
@@ -134,6 +178,7 @@ impl Tree {
             scope: None,
             created: Vec::new(),
             router_names: hashbrown::HashMap::new(),
+            named_children: hashbrown::HashSet::new(),
             keeping_saved: None,
             host: Box::new(host),
             #[cfg(feature = "std")]
@@ -175,15 +220,19 @@ impl Tree {
         handle
     }
 
-    /// Returns whether an operation on this tree unwound before it finished.
+    /// Returns whether an operation on this tree unwound before it finished, or
+    /// whether the tree was made with no identity left (see [`Tree::new`]).
     ///
     /// A panic in a component that something caught leaves the tree half-changed:
     /// the component that panicked is out of its slot and its queue is half done.
     /// From then on the tree runs no user code and commits nothing. `send`
     /// returns [`StaleHandle`], `back` returns `false`, `pump` returns
-    /// [`QueueClosed`](crate::QueueClosed), and `mount` returns a handle that
-    /// reads as gone. Reads still work, and dropping the tree still removes its
-    /// components. Applications that use `panic = "abort"` never see this.
+    /// [`QueueClosed`](crate::QueueClosed), `save` returns
+    /// [`SaveError::Poisoned`](crate::SaveError::Poisoned) without encoding
+    /// anything, and `mount` returns a handle that reads as gone. Reads still
+    /// work, and dropping the tree still removes its components, without telling
+    /// them they are hidden. Applications that use `panic = "abort"` never see
+    /// this.
     #[must_use]
     pub const fn is_poisoned(&self) -> bool {
         self.running
@@ -197,7 +246,9 @@ impl Tree {
             return refused;
         }
         self.running = true;
+        self.graveyard.set_operating(true);
         let value = run(self);
+        self.graveyard.set_operating(false);
         self.running = false;
         value
     }
@@ -239,9 +290,15 @@ impl Tree {
 
     /// Delivers one message and everything it causes, then commits once.
     ///
+    /// Everything it causes is done within [`Tree::set_work_limit`]. Past the
+    /// limit, `send` still returns `Ok(())`, which means the message was
+    /// delivered: the work left waits in order, the host is woken once, and the
+    /// next [`Tree::pump`](crate::Tree::pump) or other operation goes on with it.
+    ///
     /// # Errors
     ///
-    /// Returns [`StaleHandle`] if the component no longer exists.
+    /// Returns [`StaleHandle`] if the component no longer exists, belongs to
+    /// another tree or is not a `C`, and then runs nothing.
     pub fn send<C: Component>(
         &mut self,
         handle: Handle<C>,
@@ -256,6 +313,9 @@ impl Tree {
         msg: C::Msg,
     ) -> Result<(), StaleHandle> {
         let id = handle.id();
+        if self.handle_of::<C>(id).is_none() {
+            return Err(StaleHandle);
+        }
         let delivered = self.with_node(id, |node, tree| {
             if let Some(value) = node.as_any_mut().downcast_mut::<C>() {
                 let mut cx = Cx::new(tree, id);
@@ -295,15 +355,23 @@ impl Tree {
         self.slot(id).map(|slot| slot.effective)
     }
 
+    /// The slot `id` names, if this tree issued `id` and the slot still holds
+    /// the same generation.
     pub(crate) fn slot(&self, id: NodeId) -> Option<&NodeSlot> {
-        let index = usize::try_from(id.index).ok()?;
+        if id.tree() != self.identity {
+            return None;
+        }
+        let index = usize::try_from(id.index()).ok()?;
         self.slots
             .get(index)
             .filter(|slot| slot.generation == id.generation())
     }
 
     pub(crate) fn slot_mut(&mut self, id: NodeId) -> Option<&mut NodeSlot> {
-        let index = usize::try_from(id.index).ok()?;
+        if id.tree() != self.identity {
+            return None;
+        }
+        let index = usize::try_from(id.index()).ok()?;
         self.slots
             .get_mut(index)
             .filter(|slot| slot.generation == id.generation())
@@ -346,7 +414,7 @@ impl Tree {
             Some(existing) => *existing = slot,
             None => self.slots.push(slot),
         }
-        let id = NodeId::new(index, generation);
+        let id = NodeId::new(self.identity, index, generation);
         if let Some(parent) = parent {
             self.link_child(parent, id);
             if !in_scope {
@@ -377,7 +445,7 @@ impl Tree {
         }
         if let (Some(name), Some(parent)) = (name, parent) {
             let key = saved_key::named_child(name);
-            if !self.has_child_keyed(parent, key) {
+            if self.named_children.insert((parent, key)) {
                 return (key, None);
             }
             let owner = parent;
@@ -399,18 +467,6 @@ impl Tree {
             return (index, generation);
         }
         (u32::try_from(self.slots.len()).unwrap_or(u32::MAX), 0)
-    }
-
-    /// Returns whether a live child of `parent` has the saved key `key`.
-    fn has_child_keyed(&self, parent: NodeId, key: u64) -> bool {
-        let mut cursor = self.slot(parent).and_then(|slot| slot.first_child);
-        while let Some(child) = cursor.and_then(|id| self.slot(id)) {
-            if child.key == key {
-                return true;
-            }
-            cursor = child.next_sibling;
-        }
-        false
     }
 
     pub(crate) fn build<K: Component>(
@@ -493,6 +549,24 @@ impl Tree {
         }
     }
 
+    /// Hands the outputs `child` queued and its route over to `parent`, in place,
+    /// so they arrive in the order they were emitted although `child` is gone.
+    fn readdress_outputs(&mut self, child: NodeId, parent: NodeId, route: &Route) {
+        for work in &mut self.work {
+            if let Work::Output { from, payload } = work
+                && *from == child
+            {
+                // A box of `()` does not allocate.
+                let payload = core::mem::replace(payload, Box::new(()));
+                *work = Work::Orphan {
+                    parent,
+                    route: alloc::rc::Rc::clone(route),
+                    payload,
+                };
+            }
+        }
+    }
+
     /// Frees the slot of a hidden node that has no children left.
     fn remove_leaf(&mut self, id: NodeId) {
         let parent = self.parent(id);
@@ -501,6 +575,8 @@ impl Tree {
         };
         let node = slot.node.take();
         let route = slot.route.take();
+        let queued_outputs = core::mem::take(&mut slot.queued_outputs);
+        let key = slot.key;
         let (prev, next) = (slot.prev_sibling.take(), slot.next_sibling.take());
         #[cfg(feature = "std")]
         let tasks = (
@@ -510,13 +586,21 @@ impl Tree {
         slot.generation = slot.generation.saturating_add(1);
         // No id is ever made with the last generation, so a slot that reaches it
         // matches nothing and is never reused. Old ids stay stale for good.
-        if slot.generation == u32::MAX {
+        if slot.generation >= crate::component::handle::GENERATION_LIMIT {
             slot.parent = None;
         } else {
-            self.free.push(id.index);
+            self.free.push(id.index());
         }
         if let Some(parent) = parent {
             self.unlink_child(parent, prev, next);
+            if saved_key::is_named_child(key) {
+                self.named_children.remove(&(parent, key));
+            }
+            if queued_outputs > 0
+                && let Some(route) = &route
+            {
+                self.readdress_outputs(id, parent, route);
+            }
         }
         if !self.router_names.is_empty() {
             self.router_names.remove(&id);
@@ -532,6 +616,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::Tree;
+    use crate::component::handle::GENERATION_LIMIT;
     use crate::{Commit, Component, Cx, Host, NodeId};
 
     struct NullHost;
@@ -562,18 +647,19 @@ mod tests {
     fn a_slot_that_runs_out_of_generations_never_matches_its_first_id() {
         let mut tree = Tree::new(NullHost);
         let first = tree.mount(|_cx| Unit).id();
-        assert_eq!((first.index, first.generation()), (0, 0));
-        // Stands in for four thousand million reuses of the slot.
+        assert_eq!((first.index(), first.generation()), (0, 0));
+        // Stands in for sixteen million reuses of the slot.
+        let last = GENERATION_LIMIT - 1;
         if let Some(slot) = tree.slots.first_mut() {
-            slot.generation = u32::MAX - 1;
+            slot.generation = last;
         }
-        tree.root = Some(NodeId::new(0, u32::MAX - 1));
+        tree.root = Some(NodeId::new(tree.identity, 0, last));
         for _ in 0..3 {
             tree.mount(|_cx| Unit);
         }
         assert_eq!(tree.node_phase(first), None);
         // The retired generation cannot even be named for this slot.
-        let forged = NodeId::from_bits(u64::from(u32::MAX) << 32);
+        let forged = NodeId::new(tree.identity, 0, GENERATION_LIMIT);
         assert!(!tree.contains(forged));
     }
 
@@ -582,13 +668,62 @@ mod tests {
         let mut tree = Tree::new(NullHost);
         let mut ids = alloc::vec![tree.mount(|_cx| Unit).id()];
         // The slot's last usable generation, then its retirement.
+        let last = GENERATION_LIMIT - 1;
         if let Some(slot) = tree.slots.first_mut() {
-            slot.generation = u32::MAX - 1;
+            slot.generation = last;
         }
-        tree.root = Some(NodeId::new(0, u32::MAX - 1));
+        tree.root = Some(NodeId::new(tree.identity, 0, last));
         ids.extend((0..3).map(|_| tree.mount(|_cx| Unit).id()));
         // The promise rests on no id having the last generation.
-        assert!(ids.iter().all(|id| id.generation() < u32::MAX));
+        assert!(ids.iter().all(|id| id.generation() < GENERATION_LIMIT));
         assert!(ids.iter().all(|id| id.to_bits() != u64::MAX));
+    }
+
+    /// A component of another type than `Unit`.
+    struct Other(u8);
+    impl Component for Other {
+        type Msg = u8;
+        type Output = ();
+        fn update(&mut self, msg: u8, _cx: &mut Cx<'_, Self>) {
+            self.0 = msg;
+        }
+    }
+
+    /// Sends to its child through a handle of the wrong type, as 4-2 describes.
+    struct Sender {
+        child: crate::Handle<Unit>,
+        result: Option<Result<(), crate::NotOwnChild>>,
+    }
+    impl Component for Sender {
+        type Msg = ();
+        type Output = ();
+        fn update(&mut self, (): (), cx: &mut Cx<'_, Self>) {
+            let mistyped = crate::Handle::<Other>::new(self.child.id());
+            self.result = Some(cx.send(mistyped, 7));
+        }
+    }
+
+    #[test]
+    fn a_handle_of_the_wrong_type_is_stale_for_tree_send() {
+        let mut tree = Tree::new(NullHost);
+        let unit = tree.mount(|_cx| Unit);
+        let mistyped = crate::Handle::<Other>::new(unit.id());
+        assert_eq!(tree.send(mistyped, 7), Err(crate::StaleHandle));
+        assert!(tree.get(mistyped).is_none());
+        assert!(!tree.is_poisoned());
+        assert_eq!(tree.send(unit, ()), Ok(()));
+    }
+
+    #[test]
+    fn a_handle_of_the_wrong_type_is_refused_by_cx_send() {
+        let mut tree = Tree::new(NullHost);
+        let root = tree.mount(|cx| Sender {
+            child: cx.child(|_cx| Unit, |_parent, (), _cx| {}),
+            result: None,
+        });
+        assert_eq!(tree.send(root, ()), Ok(()));
+        assert!(!tree.is_poisoned());
+        let result = tree.get(root).and_then(|sender| sender.result);
+        assert_eq!(result, Some(Err(crate::NotOwnChild)));
     }
 }

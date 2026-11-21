@@ -50,6 +50,10 @@ pub(crate) struct NodeSlot {
     /// How many visible children have a Back handler somewhere below them.
     pub(super) live_back: u32,
     pub(super) dirty: bool,
+    /// How many outputs this component has queued that are not yet delivered.
+    /// It stays at `u16::MAX` once it gets there, which only costs a search of
+    /// the queue when the component is removed.
+    pub(crate) queued_outputs: u16,
     #[cfg(feature = "serde")]
     pub(crate) saver: Option<crate::persist::Saver>,
     #[cfg(feature = "std")]
@@ -97,6 +101,7 @@ impl NodeSlot {
             own_back: false,
             live_back: 0,
             dirty: false,
+            queued_outputs: 0,
             #[cfg(feature = "serde")]
             saver: None,
             #[cfg(feature = "std")]

@@ -31,6 +31,7 @@ use alloc::vec::Vec;
 ///
 /// impl Persist for Screens {
 ///     type Saved = SavedStack<Database>;
+///     const KIND: &'static str = "stack.screens";
 ///     fn save(&self) -> Self::Saved {
 ///         self.stack.snapshot()
 ///     }
@@ -55,6 +56,7 @@ use alloc::vec::Vec;
 ///
 /// impl Persist for Screens {
 ///     type Saved = SavedStack<u32>;
+///     const KIND: &'static str = "stack.screens";
 ///     fn save(&self) -> Self::Saved {
 ///         self.stack.snapshot()
 ///     }

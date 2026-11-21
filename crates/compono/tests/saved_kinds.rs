@@ -27,7 +27,7 @@ const fn kind(k: u8) -> &'static str {
     match k {
         1 => "note",
         2 => "counter",
-        _ => "",
+        _ => "plain",
     }
 }
 
@@ -123,7 +123,8 @@ fn a_newer_version_reads_older_state_through_migrate() {
 }
 
 #[test]
-fn a_component_without_a_kind_restores_as_before() {
+fn a_component_restores_state_its_own_kind_saved() {
+    // Every kind has a name since 4-4; this one is the plain kind.
     let bytes = saved_by::<u32, 0, 0>(7);
     assert_eq!(restored_by::<u32, 0, 0>(&bytes), Some(7));
 }

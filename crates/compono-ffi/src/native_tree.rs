@@ -90,9 +90,13 @@ fn remove(id: u64) {
 
 /// Frees trees owned by this thread whose [`NativeTree`] was dropped elsewhere.
 ///
-/// Every call on a tree does this too. A binding calls it directly when the last
-/// tree may be released from a garbage collector's thread, or when
-/// [`Platform::schedule_pump`] arrives and it has no tree left to pump.
+/// Every call on a tree does this too, but a tree dropped on another thread, as a
+/// garbage collector or a deinitialiser on a background queue drops it, is freed
+/// only by a later call on its owner's thread. So a binding must call this on the
+/// owning thread whenever [`Platform::schedule_pump`] arrives, even when it has no
+/// tree left to pump; otherwise the tree and its tasks live until the thread ends.
+/// The Swift package and the Compose library do it at every pump, through
+/// `TreeBridge.collectRetired`.
 pub fn collect_retired() {
     let mine = LOCAL
         .try_with(|local| local.retired.take())
@@ -207,13 +211,17 @@ impl NativeTree {
     ///
     /// # Errors
     ///
-    /// Returns the errors of [`NativeTree::with`].
+    /// Returns the errors of [`NativeTree::with`]. A poisoned tree is not read,
+    /// because its components may be half-changed.
     pub fn read<R>(&self, read: impl FnOnce(&Tree) -> R) -> Result<R, NativeError> {
         let owned = self.owned()?;
         let tree = owned
             .tree
             .try_borrow()
             .map_err(|_error| NativeError::Busy)?;
+        if tree.is_poisoned() {
+            return Err(NativeError::Poisoned);
+        }
         Ok(read(&tree))
     }
 
@@ -298,10 +306,16 @@ impl NativeTree {
     ///
     /// # Errors
     ///
-    /// Returns the errors of [`NativeTree::read`], and [`NativeError::Save`] if a
-    /// component cannot be encoded.
+    /// Returns the errors of [`NativeTree::read`], among them
+    /// [`NativeError::Poisoned`], and [`NativeError::Save`] if a component
+    /// cannot be encoded. A binding keeps the last bytes it saved on any error.
     pub fn save(&self, schema: u32) -> Result<Vec<u8>, NativeError> {
-        self.read(|tree| tree.save(schema).map_err(|_error| NativeError::Save))?
+        self.read(|tree| {
+            tree.save(schema).map_err(|error| match error {
+                compono::SaveError::Poisoned => NativeError::Poisoned,
+                _ => NativeError::Save,
+            })
+        })?
     }
 }
 

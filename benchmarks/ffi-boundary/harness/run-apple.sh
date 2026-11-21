@@ -17,5 +17,5 @@ xcrun swiftc $common -I uni/dist/swift -Xcc -fmodule-map-file=uni/dist/swift/uni
   -o out/bench-uni-ios
 for backend in bolt uni; do
   echo "== $backend ios-simulator"
-  xcrun simctl spawn $udid "$PWD/out/bench-$backend-ios"
+  xcrun simctl spawn $udid "$PWD/out/bench-$backend-ios" | tee "out/apple-$backend.log"
 done

@@ -47,33 +47,44 @@ pub struct MyApp {
 impl MyApp {
     pub fn new(listener: Arc<dyn Listener>, saved: Vec<u8>) -> Self { /* NativeTree::new or ::restore, mount_persistent */ }
     pub fn root(&self) -> RootComponent { /* the root's exported class */ }
-    pub fn pump(&self) { checked(self.tree.pump()); }
-    pub fn set_phase(&self, code: i32) { /* 0 hidden, 1 visible, 2 focused: phase_from_code */ }
-    pub fn back(&self) -> bool { checked(self.tree.back()).unwrap_or(false) }
-    pub fn back_start(&self) -> i64 { /* target address, or compono_ffi::NO_NODE */ }
-    pub fn back_cancel(&self) { checked(self.tree.back_cancel()); }
-    pub fn back_commit(&self) -> bool { checked(self.tree.back_commit()).unwrap_or(false) }
-    pub fn save(&self) -> Vec<u8> { checked(self.tree.save(SCHEMA)).unwrap_or_default() }
-    pub fn contains(&self, node: i64) -> bool { /* tree.contains(NodeId::from_bits(..)) */ }
+    pub fn pump(&self) -> Result<(), TreeError> { throwing(self.tree.pump()).map(drop) }
+    pub fn set_phase(&self, code: i32) -> Result<(), TreeError> { /* phase_from_code, else UnknownPhase */ }
+    pub fn back(&self) -> Result<bool, TreeError> { Ok(throwing(self.tree.back())?.unwrap_or(false)) }
+    pub fn back_start(&self) -> Result<i64, TreeError> { /* target address, or compono_ffi::NO_NODE */ }
+    pub fn back_cancel(&self) -> Result<(), TreeError> { throwing(self.tree.back_cancel()).map(drop) }
+    pub fn back_commit(&self) -> Result<bool, TreeError> { Ok(throwing(self.tree.back_commit())?.unwrap_or(false)) }
+    pub fn save(&self) -> Result<Vec<u8>, TreeError> { Ok(throwing(self.tree.save(SCHEMA))?.unwrap_or_default()) }
+    pub fn contains(&self, node: i64) -> Result<bool, TreeError> { /* tree.contains(NodeId::from_bits(..)) */ }
+    pub fn collect_retired() { compono_ffi::collect_retired(); }
 }
 ```
 
-Pass every `NativeTree` result through one helper. `NativeError::Gone` is normal
-use, such as a tap on a component just removed. Every other error is a bug in the
-native caller (`NativeError::is_misuse`), so a debug build stops at it:
+Every exported function runs inside an `extern "C"` function, where a panic stops
+the process, so nothing on this path panics or uses `debug_assert!`. The root's
+methods return the kind of a `NativeError` as an exported `#[boltffi::error]` enum,
+which Swift throws and Kotlin raises; the Swift package and the Compose library log
+it. `NativeError::Gone` is normal use, such as a tap on a component just removed,
+and gives nothing:
 
 ```rust,ignore
-#[track_caller]
-fn checked<T>(result: Result<T, NativeError>) -> Option<T> {
+#[boltffi::error]
+pub enum TreeError { WrongThread, Busy, Save, QueueClosed, Poisoned, UnknownPhase, Other }
+
+fn throwing<T>(result: Result<T, NativeError>) -> Result<Option<T>, TreeError> {
     match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            debug_assert!(!error.is_misuse(), "native call failed: {error}");
-            None
-        }
+        Ok(value) => Ok(Some(value)),
+        Err(NativeError::Gone) => Ok(None),
+        Err(error) => Err(error.into()), // a `From<NativeError>` that maps each kind
     }
 }
 ```
+
+Component objects give `None` for any error, through `result.ok()`; a misuse then
+also reaches the next root call, which throws it.
+
+`collect_retired` frees a tree whose bindings were released on another thread. The
+packages call it at every pump: Swift through the static `TreeBridge` requirement,
+Kotlin through `treeBridge(..., collectRetired = { MyApp.collectRetired() })`.
 
 `compono_ffi::NativeTree` wraps the tree for this boundary, and
 `compono_ffi::Platform` is what it calls back: forward `commit` and
@@ -134,7 +145,7 @@ and redraws when that component changes.
 
 - Every `NativeTree` call happens on the thread that created it, the main thread.
   Other threads get `WrongThread`; a call made while another runs gets `Busy`.
-  Through `checked`, both stop a debug build at the call.
+  The root's methods throw both, and the packages log them.
 - The FFI thread has no Tokio context. Create a Tokio timer inside the future:
   `Box::pin(async move { tokio::time::sleep(d).await })`.
 - A `ULongArray` in a callback makes BoltFFI's Kotlin side fail in `JNI_OnLoad`.

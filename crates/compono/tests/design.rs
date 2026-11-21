@@ -98,6 +98,7 @@ impl Component for Home {
 }
 impl Persist for Home {
     type Saved = HomeSaved;
+    const KIND: &'static str = "design.home";
     fn save(&self) -> HomeSaved {
         HomeSaved {
             starts: self.starts,
@@ -150,6 +151,7 @@ impl Component for Game {
 }
 impl Persist for Game {
     type Saved = GameSaved;
+    const KIND: &'static str = "design.game";
     fn save(&self) -> GameSaved {
         GameSaved { score: self.score }
     }
@@ -242,6 +244,7 @@ impl Component for Root {
 }
 impl Persist for Root {
     type Saved = RootSaved;
+    const KIND: &'static str = "design.root";
     fn save(&self) -> RootSaved {
         RootSaved {
             stack: self.stack.snapshot(),
@@ -552,10 +555,12 @@ fn a_reused_slot_does_not_revive_old_handles() {
     tree.send(old, GameMsg::Exit).unwrap();
     tree.send(home(&tree, root), HomeMsg::Play).unwrap();
     let new = game(&tree, root);
+    // The low 28 bits of an address name the slot.
     assert_eq!(
-        old.id().to_bits() & 0xffff_ffff,
-        new.id().to_bits() & 0xffff_ffff
+        old.id().to_bits() & 0x0fff_ffff,
+        new.id().to_bits() & 0x0fff_ffff
     );
+    assert_ne!(old.id(), new.id());
     assert!(tree.get(old).is_none());
     assert!(tree.get(new).is_some());
     assert_eq!(NodeId::from_bits(new.id().to_bits()), new.id());

@@ -9,7 +9,7 @@
 use compono::router::link::{Navigation, Paths};
 use compono::router::stack::Stack;
 use compono::{Commit, Component, Cx, Handle, Host, Tree};
-use compono_web::history::{Browser, EntryState, History};
+use compono_web::history::{Browser, EntryState, History, Refused};
 
 struct NullHost;
 impl Host for NullHost {
@@ -79,6 +79,9 @@ struct FakeBrowser {
     queued: Vec<i32>,
     calls: Vec<Call>,
     epochs: u32,
+    /// How many of the next pushes and replaces to refuse, as a browser that
+    /// limits the rate of `pushState` does.
+    refuse: usize,
 }
 
 impl FakeBrowser {
@@ -115,17 +118,33 @@ impl FakeBrowser {
     }
 }
 
+impl FakeBrowser {
+    fn refused(&mut self) -> bool {
+        let refused = self.refuse > 0;
+        self.refuse = self.refuse.saturating_sub(1);
+        refused
+    }
+}
+
 impl Browser for FakeBrowser {
-    fn push(&mut self, path: &str, state: EntryState) {
+    fn push(&mut self, path: &str, state: EntryState) -> Result<(), Refused> {
+        if self.refused() {
+            return Err(Refused);
+        }
         self.calls.push(Call::Push(path.to_owned(), state.index));
         self.entries.truncate(self.at + 1);
         self.entries.push((path.to_owned(), Some(state)));
         self.at += 1;
+        Ok(())
     }
 
-    fn replace(&mut self, path: &str, state: EntryState) {
+    fn replace(&mut self, path: &str, state: EntryState) -> Result<(), Refused> {
+        if self.refused() {
+            return Err(Refused);
+        }
         self.calls.push(Call::Replace(path.to_owned(), state.index));
         self.entries[self.at] = (path.to_owned(), Some(state));
+        Ok(())
     }
 
     fn go(&mut self, delta: i32) {
@@ -457,4 +476,57 @@ proptest::proptest! {
         app.settle();
         proptest::prop_assert_eq!(app.browser.at + 1, app.stack().depth());
     }
+}
+
+#[test]
+fn a_refused_push_is_written_by_the_next_sync() {
+    // 5-2: the model records only what the browser accepted.
+    let mut app = App::open("/0");
+    app.browser.refuse = 1;
+    app.send(Msg::Push(1));
+    assert_eq!(app.browser.paths(), ["/0"], "the browser refused the push");
+    app.sync();
+    assert_eq!(
+        app.browser.paths(),
+        ["/0", "/1"],
+        "the next sync retries it"
+    );
+    app.send(Msg::Push(2));
+    assert_eq!(app.browser.paths(), ["/0", "/1", "/2"]);
+    // Back goes through the app's own entries, not off the site.
+    let back = app.browser.user_go(-1);
+    app.popped(back);
+    assert_eq!(app.routes(), [0, 1]);
+    let back = app.browser.user_go(-1);
+    app.popped(back);
+    assert_eq!(app.routes(), [0]);
+}
+
+#[test]
+fn a_refused_replace_is_written_by_the_next_sync() {
+    let mut app = App::open("/0");
+    app.send(Msg::Push(1));
+    app.browser.refuse = 1;
+    app.send(Msg::Replace(5));
+    assert_eq!(app.browser.paths(), ["/0", "/1"]);
+    app.sync();
+    assert_eq!(app.browser.paths(), ["/0", "/5"]);
+    let back = app.browser.user_go(-1);
+    app.popped(back);
+    assert_eq!(app.routes(), [0]);
+}
+
+#[test]
+fn several_refused_pushes_leave_the_model_on_the_last_accepted_entry() {
+    let mut app = App::open("/0");
+    app.browser.refuse = 3;
+    app.send(Msg::Push(1));
+    app.send(Msg::Push(2));
+    app.send(Msg::Push(3));
+    assert_eq!(app.browser.paths(), ["/0"]);
+    app.sync();
+    assert_eq!(app.browser.paths(), ["/0", "/1", "/2", "/3"]);
+    let back = app.browser.user_go(-1);
+    app.popped(back);
+    assert_eq!(app.routes(), [0, 1, 2]);
 }

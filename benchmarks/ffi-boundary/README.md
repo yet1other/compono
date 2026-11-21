@@ -66,23 +66,23 @@ Needs `boltffi` 0.32.1, Xcode, and an Android SDK with an NDK.
 ```
 
 ```bash
-cargo build --release -p uni-bench
+cargo build --release --locked -p uni-bench
 ```
 
 ```bash
-cargo build --release -p uni-bench --target aarch64-apple-ios-sim
+cargo build --release --locked -p uni-bench --target aarch64-apple-ios-sim
 ```
 
 ```bash
-cargo ndk -t arm64-v8a -P 26 build --release -p uni-bench
+cargo ndk -t arm64-v8a -P 26 build --release --locked -p uni-bench
 ```
 
 ```bash
-cargo run --release -p uni-bench --bin uniffi-bindgen -- generate --library target/release/libuni_bench.dylib --language swift --out-dir uni/dist/swift
+cargo run --release --locked -p uni-bench --bin uniffi-bindgen -- generate --library target/release/libuni_bench.dylib --language swift --out-dir uni/dist/swift
 ```
 
 ```bash
-cargo run --release -p uni-bench --bin uniffi-bindgen -- generate --library target/release/libuni_bench.dylib --language kotlin --out-dir uni/dist/kotlin
+cargo run --release --locked -p uni-bench --bin uniffi-bindgen -- generate --library target/release/libuni_bench.dylib --language kotlin --out-dir uni/dist/kotlin
 ```
 
 ```bash

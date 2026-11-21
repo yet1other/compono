@@ -40,6 +40,7 @@ impl Component for Leaf {
 
 impl Persist for Leaf {
     type Saved = u8;
+    const KIND: &'static str = "router_laws.leaf";
     fn save(&self) -> u8 {
         self.name
     }
@@ -103,6 +104,7 @@ impl Component for Dialog {
 
 impl Persist for Dialog {
     type Saved = SavedSlot<u8>;
+    const KIND: &'static str = "router_laws.dialog";
     fn save(&self) -> SavedSlot<u8> {
         self.slot.snapshot()
     }
@@ -186,6 +188,7 @@ impl Component for Book {
 
 impl Persist for Book {
     type Saved = SavedPages<u8>;
+    const KIND: &'static str = "router_laws.book";
     fn save(&self) -> SavedPages<u8> {
         self.pages.snapshot()
     }
@@ -312,6 +315,7 @@ impl Component for Screen {
 
 impl Persist for Screen {
     type Saved = SavedPanels<u8, u8, u8>;
+    const KIND: &'static str = "router_laws.screen";
     fn save(&self) -> Self::Saved {
         self.panels.snapshot()
     }
@@ -374,7 +378,8 @@ impl Model {
         let room = match self.mode {
             PanelsMode::Single => 1,
             PanelsMode::Dual => 2,
-            PanelsMode::Triple => 3,
+            // `PanelsMode` may grow; the model knows these three.
+            _ => 3,
         };
         let mut phases = [None; 3];
         let mut placed = 0;
@@ -470,6 +475,7 @@ impl Component for Feed {
 
 impl Persist for Feed {
     type Saved = SavedItems<u8>;
+    const KIND: &'static str = "router_laws.feed";
     fn save(&self) -> SavedItems<u8> {
         self.items.snapshot()
     }

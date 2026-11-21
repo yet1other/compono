@@ -68,7 +68,14 @@ impl<'t, C: Component> Cx<'t, C> {
     }
 
     /// Queues an event for the parent. It is delivered after this component returns.
+    ///
+    /// Outputs reach the parent in the order they were emitted, even when the
+    /// parent or anything else removes this component before they are
+    /// delivered. An output is dropped only when the parent is removed too.
     pub fn emit(&mut self, output: C::Output) {
+        if let Some(slot) = self.tree.slot_mut(self.me) {
+            slot.queued_outputs = slot.queued_outputs.saturating_add(1);
+        }
         self.tree.enqueue(Work::Output {
             from: self.me,
             payload: Box::new(output),
@@ -83,16 +90,21 @@ impl<'t, C: Component> Cx<'t, C> {
     /// # Errors
     ///
     /// Returns [`NotOwnChild`] and queues nothing if the target is neither this
-    /// component nor one of its live children. A child therefore cannot reach its
-    /// parent even if it is handed the parent's handle, and a grandchild is
-    /// reached through its own parent.
+    /// component nor one of its live children of type `K`. A child therefore
+    /// cannot reach its parent even if it is handed the parent's handle, and a
+    /// grandchild is reached through its own parent.
     pub fn send<K: Component>(
         &mut self,
         target: Handle<K>,
         msg: K::Msg,
     ) -> Result<(), NotOwnChild> {
         let to = target.id();
-        if to != self.me && self.tree.parent(to) != Some(self.me) {
+        let reachable = if to == self.me {
+            core::any::TypeId::of::<K>() == core::any::TypeId::of::<C>()
+        } else {
+            self.tree.parent(to) == Some(self.me) && self.tree.handle_of::<K>(to).is_some()
+        };
+        if !reachable {
             return Err(NotOwnChild);
         }
         self.tree.enqueue(Work::Msg {
@@ -201,7 +213,7 @@ impl<'t, C: Component> Cx<'t, C> {
         init: impl FnOnce(&mut Cx<'_, K>) -> K,
         on_output: impl Fn(&mut C, K::Output, &mut Cx<'_, C>) + 'static,
     ) -> Handle<K> {
-        let route: Route = Box::new(move |value, output, tree, id| {
+        let route: Route = alloc::rc::Rc::new(move |value, output, tree, id| {
             let (Some(value), Ok(output)) =
                 (value.downcast_mut::<C>(), output.downcast::<K::Output>())
             else {
@@ -228,7 +240,12 @@ impl<'t, C: Component> Cx<'t, C> {
         self.destroy_id(child.id())
     }
 
-    /// Sets the phase this parent grants a child.
+    /// Sets the phase this parent grants a child, and returns the phase the child
+    /// has now.
+    ///
+    /// A child is never above its parent, so the phase returned is the lower of
+    /// the grant and this component's phase (4-5). The grant is kept: when this
+    /// component rises later, the child rises up to the grant.
     ///
     /// # Errors
     ///
@@ -238,8 +255,9 @@ impl<'t, C: Component> Cx<'t, C> {
         &mut self,
         child: Handle<K>,
         phase: Phase,
-    ) -> Result<(), NotOwnChild> {
-        self.assign_id(child.id(), phase)
+    ) -> Result<Phase, NotOwnChild> {
+        self.assign_id(child.id(), phase)?;
+        Ok(self.tree.phase_of(child.id()))
     }
 
     fn destroy_id(&mut self, id: NodeId) -> Result<(), NotOwnChild> {

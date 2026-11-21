@@ -52,7 +52,7 @@
 //! let change = tree
 //!     .get(site)
 //!     .and_then(|site| Navigation::toward(&Addresses, "/7", &site.stack));
-//! assert_eq!(change, Some(Navigation { keep: 1, open: vec![7] }), "the list stays");
+//! assert_eq!(change, Some(Navigation::new(1, vec![7])), "the list stays");
 //! if let Some(change) = change {
 //!     tree.send(site, change)?;
 //! }
@@ -87,11 +87,20 @@ pub trait Paths {
 
 /// A change to a stack: keep its oldest entries and open routes above them.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Navigation<R> {
     /// How many of the oldest entries to keep. Zero replaces every entry.
     pub keep: usize,
     /// Routes to open above the kept entries, oldest first.
     pub open: Vec<R>,
+}
+
+impl<R> Navigation<R> {
+    /// Keeps the `keep` oldest entries and opens `open` above them.
+    #[must_use]
+    pub const fn new(keep: usize, open: Vec<R>) -> Self {
+        Self { keep, open }
+    }
 }
 
 impl<R: 'static> Navigation<R> {

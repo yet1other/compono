@@ -65,7 +65,9 @@ then change `Motion.swift` and `Motion.kt` until both suites pass.
 
 - Export the root's standard methods with exactly these Rust names: `new(listener,
   saved)`, `pump`, `set_phase(code: i32)`, `back`, `back_start`, `back_cancel`,
-  `back_commit`, `contains(node: i64)` and `save`, and a listener trait with
+  `back_commit`, `contains(node: i64)`, `save` and the static `collect_retired`,
+  every one but `new` and `collect_retired` returning `Result<_, TreeError>`, and a
+  listener trait with
   `commit(dirty: Vec<i64>, can_back: bool)` and `schedule_pump`. The Swift package and
   the Compose library are named to match, so `extension App: @retroactive TreeBridge {}`
   stays empty. BoltFFI reads exports from source, so a macro cannot write them.
@@ -75,9 +77,10 @@ then change `Motion.swift` and `Motion.kt` until both suites pass.
   parameter in a callback makes BoltFFI's Kotlin side fail in `JNI_OnLoad`.
 - Every `NativeTree` call happens on the thread that created it. Other threads get
   `NativeError::WrongThread`, and a call from inside a running call gets `Busy`.
-  The showcase passes every result through `checked` in `component.rs`, which
-  ignores `Gone` and stops a debug build on `NativeError::is_misuse`. Route every
-  new call through it too.
+  The root's methods pass results through `throwing` in `component.rs`, which
+  gives `Ok(None)` for `Gone` and returns every other kind as `TreeError`, which
+  Swift throws and Kotlin raises. Component objects use `checked`, which gives
+  `None`. Nothing on this path panics: it runs inside `extern "C"` functions.
 - A Tokio sleep must be created inside the future (`async move { sleep(d).await }`),
   because the FFI thread has no runtime context.
 - AGP 9 reads Kotlin sources from `kotlin.directories.add(...)`, not `java.srcDir`.

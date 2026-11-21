@@ -116,3 +116,97 @@ fn a_poisoned_tree_can_still_be_read() {
         "the component that panicked is not given out half-changed"
     );
 }
+
+/// A leaf whose state is saved, counting the calls of `Persist::save`.
+#[cfg(feature = "serde")]
+struct Leaf {
+    saves: Rc<RefCell<usize>>,
+}
+
+#[cfg(feature = "serde")]
+impl Component for Leaf {
+    type Msg = bool;
+    type Output = ();
+    fn update(&mut self, explode: bool, _cx: &mut Cx<'_, Self>) {
+        if explode {
+            panic!("the leaf failed");
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl compono::Persist for Leaf {
+    type Saved = u8;
+    const KIND: &'static str = "poison.leaf";
+    fn save(&self) -> u8 {
+        *self.saves.borrow_mut() += 1;
+        1
+    }
+}
+
+#[cfg(feature = "serde")]
+struct Pair {
+    leaves: [Handle<Leaf>; 2],
+}
+
+#[cfg(feature = "serde")]
+impl Component for Pair {
+    type Msg = ();
+    type Output = ();
+    fn update(&mut self, (): (), _cx: &mut Cx<'_, Self>) {}
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn a_poisoned_tree_saves_nothing_and_says_so() {
+    // 2-1: the state of a half-changed tree must not replace the last good save.
+    let saves = Rc::new(RefCell::new(0));
+    let mut tree = Tree::new(Commits::default());
+    let root = tree.mount(|cx| {
+        let leaf = |cx: &mut Cx<'_, Pair>| {
+            let saves = Rc::clone(&saves);
+            cx.persistent_child(move |_cx| Leaf { saves }, |_pair, (), _cx| {})
+        };
+        Pair {
+            leaves: [leaf(cx), leaf(cx)],
+        }
+    });
+    assert!(tree.save(1).is_ok());
+    assert_eq!(*saves.borrow(), 2);
+    let fragile = tree.get(root).unwrap().leaves[0];
+    let caught = catch_unwind(AssertUnwindSafe(|| tree.send(fragile, true)));
+    assert!(caught.is_err());
+
+    assert_eq!(tree.save(1), Err(compono::SaveError::Poisoned));
+    assert_eq!(*saves.borrow(), 2, "a poisoned tree ran Persist::save");
+}
+
+struct Twins {
+    first: Handle<Fragile>,
+}
+
+impl Component for Twins {
+    type Msg = ();
+    type Output = ();
+    fn update(&mut self, (): (), _cx: &mut Cx<'_, Self>) {}
+}
+
+#[test]
+fn dropping_a_poisoned_tree_tells_no_component_it_is_hidden() {
+    // 2-1: dropping runs no phase change, which is user code.
+    let log = Log::default();
+    let mut tree = Tree::new(Commits::default());
+    tree.set_phase(Phase::Focused);
+    let root = tree.mount(|cx| {
+        let (one, two) = (Rc::clone(&log), Rc::clone(&log));
+        let first = cx.child(move |_cx| Fragile { log: one }, |_twins, (), _cx| {});
+        cx.child(move |_cx| Fragile { log: two }, |_twins, (), _cx| {});
+        Twins { first }
+    });
+    let first = tree.get(root).unwrap().first;
+    let caught = catch_unwind(AssertUnwindSafe(|| tree.send(first, true)));
+    assert!(caught.is_err());
+    log.borrow_mut().clear();
+    drop(tree);
+    assert!(log.borrow().is_empty(), "told: {:?}", log.borrow());
+}

@@ -32,6 +32,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = Vec<u8>;
+    const KIND: &'static str = "audit.cell";
     fn save(&self) -> Vec<u8> {
         self.value.clone()
     }
@@ -71,6 +72,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = SavedStack<u32>;
+    const KIND: &'static str = "audit.screens";
     fn save(&self) -> SavedStack<u32> {
         self.stack.snapshot()
     }
@@ -125,6 +127,7 @@ impl Component for Shelf {
 
 impl Persist for Shelf {
     type Saved = SavedChildSet<u32>;
+    const KIND: &'static str = "audit.shelf";
     fn save(&self) -> SavedChildSet<u32> {
         self.set.snapshot()
     }

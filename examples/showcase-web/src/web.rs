@@ -56,7 +56,7 @@ impl Page {
     }
 
     fn navigate(&mut self, navigation: Option<Navigation<Screen>>) {
-        if let Some(Navigation { keep, open }) = navigation {
+        if let Some(Navigation { keep, open, .. }) = navigation {
             let root = self.app.root();
             let _gone = self.app.tree_mut().send(root, RootMsg::Show { keep, open });
         }

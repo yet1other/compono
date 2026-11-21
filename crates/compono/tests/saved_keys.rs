@@ -34,6 +34,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "saved_keys.cell";
     fn save(&self) -> u32 {
         self.value
     }
@@ -60,6 +61,7 @@ impl Component for Screen {
 
 impl Persist for Screen {
     type Saved = ();
+    const KIND: &'static str = "saved_keys.screen";
     fn save(&self) {}
 }
 
@@ -141,6 +143,7 @@ impl Component for Owner {
 
 impl Persist for Owner {
     type Saved = Option<compono::router::stack::SavedStack<u32>>;
+    const KIND: &'static str = "saved_keys.owner";
     fn save(&self) -> Self::Saved {
         Some(self.first.snapshot())
     }

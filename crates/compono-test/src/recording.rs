@@ -7,6 +7,7 @@ use std::task::{Wake, Waker};
 
 /// An owned copy of one [`Commit`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CommitRecord {
     /// The components that changed.
     pub dirty: Vec<NodeId>,

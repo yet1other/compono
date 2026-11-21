@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
                 treeBridge(
                     app::pump, app::setPhase, app::back, app::backStart,
                     app::backCancel, app::backCommit, app::contains, app::save,
+                    collectRetired = { ShowcaseApp.collectRetired() },
                 )
             },
         )

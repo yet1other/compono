@@ -131,7 +131,49 @@ pub(crate) fn repair_keys<'a>(keys: impl Iterator<Item = &'a mut u64>, counter: 
 
 /// Entry components whose scope was dropped, each with the component that made
 /// it. The tree removes them when the operation ends.
-pub(crate) type Graveyard = Rc<RefCell<Vec<(NodeId, NodeId)>>>;
+pub(crate) type Graveyard = Rc<Grave>;
+
+/// The graveyard of one tree, and what it needs to ask for an operation when a
+/// scope is dropped while none runs (2-3).
+pub(crate) struct Grave {
+    buried: RefCell<Vec<(NodeId, NodeId)>>,
+    /// Whether an operation is running, which removes what is buried before it
+    /// ends. Otherwise the first scope buried wakes the host.
+    operating: core::cell::Cell<bool>,
+    waker: core::task::Waker,
+}
+
+impl fmt::Debug for Grave {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Grave").finish_non_exhaustive()
+    }
+}
+
+impl Grave {
+    pub(crate) fn new(waker: core::task::Waker) -> Graveyard {
+        Rc::new(Self {
+            buried: RefCell::new(Vec::new()),
+            operating: core::cell::Cell::new(false),
+            waker,
+        })
+    }
+
+    pub(crate) fn set_operating(&self, operating: bool) {
+        self.operating.set(operating);
+    }
+
+    pub(crate) fn try_borrow(
+        &self,
+    ) -> Result<core::cell::Ref<'_, Vec<(NodeId, NodeId)>>, core::cell::BorrowError> {
+        self.buried.try_borrow()
+    }
+
+    pub(crate) fn try_borrow_mut(
+        &self,
+    ) -> Result<core::cell::RefMut<'_, Vec<(NodeId, NodeId)>>, core::cell::BorrowMutError> {
+        self.buried.try_borrow_mut()
+    }
+}
 
 /// The components one router entry created.
 ///
@@ -141,7 +183,8 @@ pub(crate) type Graveyard = Rc<RefCell<Vec<(NodeId, NodeId)>>>;
 /// Dropping a scope that [`Cx::scoped`](crate::Cx::scoped) made removes its
 /// components when the running operation ends, as
 /// [`Cx::destroy_scope`](crate::Cx::destroy_scope) would at once. A router that
-/// is dropped therefore takes its entries with it.
+/// is dropped therefore takes its entries with it. A scope dropped between
+/// operations wakes the host once, and the next operation removes them.
 #[derive(Debug, Default)]
 pub struct Scope {
     first: Option<NodeId>,
@@ -159,8 +202,15 @@ impl Drop for Scope {
         // The tree borrows the graveyard only to swap it out, while no user code
         // runs, so this borrow always succeeds.
         if let Ok(mut buried) = graveyard.try_borrow_mut() {
+            let was_empty = buried.is_empty();
             let ids = self.first.iter().chain(self.rest.iter());
             buried.extend(ids.map(|id| (*owner, *id)));
+            // Outside an operation nothing else would remove them, so the host is
+            // asked for one, once for however many scopes follow.
+            if was_empty && !buried.is_empty() && !graveyard.operating.get() {
+                drop(buried);
+                graveyard.waker.wake_by_ref();
+            }
         }
     }
 }

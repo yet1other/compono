@@ -27,6 +27,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "rebuilt_router.cell";
     fn save(&self) -> u32 {
         self.0
     }
@@ -64,6 +65,7 @@ impl Component for Owner {
 
 impl Persist for Owner {
     type Saved = SavedSlot<u32>;
+    const KIND: &'static str = "rebuilt_router.owner";
     fn save(&self) -> SavedSlot<u32> {
         self.dialog.as_ref().unwrap().snapshot()
     }

@@ -164,6 +164,13 @@ impl<K: Eq + Hash + 'static, H: 'static, P: Component> ChildSet<K, H, P> {
 
     /// Makes the live children match `desired`, in `O(n)` expected time.
     ///
+    /// The cost grows with the whole desired list, not with what changed: it
+    /// reads every key, and hashes every key unless the keys are the same and in
+    /// the same order. In the `set_scaling` example, one added row costs about
+    /// 1.4 ms in a set of 50 000 rows and 16 ms in a set of 500 000, close to a
+    /// frame, while a few thousand rows cost well under a millisecond. A long list that changes a row at a time belongs in
+    /// [`Items`](crate::router::items::Items), which keeps only a window alive.
+    ///
     /// Removed keys are destroyed first, starting from the end of the current
     /// order. Then lowered phases are applied, new children are created, and
     /// raised phases are applied, so an old child always loses focus before a
