@@ -74,10 +74,17 @@ Versioning has it for `0.x`. An adapter reaches `1.0.0` only after its toolkit d
    will take; `cargo publish --workspace` publishes them. A dry run of one crate
    with `-p` fails while the new versions of its dependencies are not yet on
    crates.io.
-5. Once the adapters' `0.1.0` is published, yank their `1.0.0-rc` on crates.io,
-   which was published before they had versions of their own:
-   `cargo yank compono-egui@1.0.0-rc`, then the same for `compono-iced` and
-   `compono-gpui`. Projects that already lock it keep building.
+5. Push the tag `v<core version>` on the release commit, and make a GitHub
+   release for it from the version's section of `CHANGELOG.md`. Mark a release
+   candidate as a pre-release.
+6. The Compose library uploads to the Central Portal for a manual release:
+   `gradle :compono:publishToMavenCentral` in `native/showcase/android`, then
+   Publish on the deployment in the portal.
+
+`compono-egui`, `compono-iced` and `compono-gpui` `1.0.0-rc` were published before
+the adapters had versions of their own. They are yanked on crates.io, so that
+`cargo add` takes the adapters' own line. Projects that already lock them keep
+building.
 
 ## Minimum Rust version
 
