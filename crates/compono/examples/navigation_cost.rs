@@ -1,6 +1,8 @@
 //! Measures one push and pop through the real `Stack`, with payloads and allocations,
-//! for a numbered and a named stack, and one hide and show of the component that
-//! owns the stack.
+//! and one hide and show of the component that owns the stack.
+//!
+//! A named stack costs the same per push and pop: its name is looked up once, when
+//! the stack is built, and its entries' keys come from its id like any other.
 #![expect(unsafe_code, reason = "a counting allocator needs it")]
 
 use compono::router::stack::Stack;
@@ -59,8 +61,7 @@ impl Component for Root {
     }
 }
 
-/// A named stack makes every new entry look up which router holds its name.
-fn measure(depth: u32, named: bool) -> (u64, u64) {
+fn measure(depth: u32) -> (u64, u64) {
     let mut tree = Tree::new(NoHost);
     let root = tree.mount(|cx: &mut Cx<'_, Root>| {
         let build = |cx: &mut Cx<'_, Root>| {
@@ -75,12 +76,10 @@ fn measure(depth: u32, named: bool) -> (u64, u64) {
                 )
             })
         };
-        let stack = if named {
-            cx.named_routers("screens", build)
-        } else {
-            build(cx)
-        };
-        Root { stack, sum: 0 }
+        Root {
+            stack: build(cx),
+            sum: 0,
+        }
     });
     tree.set_phase(Phase::Focused);
     for _ in 1..depth {
@@ -130,12 +129,8 @@ fn cover(depth: u32) -> u64 {
 
 fn main() {
     for depth in [1, 10, 100] {
-        let (nanos, allocations) = measure(depth, false);
+        let (nanos, allocations) = measure(depth);
         println!("depth {depth}: push+pop {nanos} ns, {allocations} allocations");
-    }
-    for depth in [1, 10, 100] {
-        let (nanos, allocations) = measure(depth, true);
-        println!("depth {depth}: push+pop on a named stack {nanos} ns, {allocations} allocations");
     }
     for depth in [1, 100, 10_000] {
         let nanos = cover(depth);

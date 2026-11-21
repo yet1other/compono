@@ -253,11 +253,7 @@ fn every_transition_ends_at_rest() {
 }
 
 fn event(progress: f32, edge: SwipeEdge, touch_y: f32) -> BackEvent {
-    BackEvent {
-        progress,
-        edge,
-        touch_y,
-    }
+    BackEvent::new(progress, edge, touch_y)
 }
 
 #[test]

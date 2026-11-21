@@ -13,7 +13,8 @@ pub fn tree(host: impl Host + 'static, saved: Option<&[u8]>) -> Tree {
     }
 }
 
-/// Encodes the tree for [`tree`], or `None` if a component could not be encoded.
+/// Encodes the tree for [`tree`], or `None` if it could not be saved, such as when
+/// it is poisoned. The caller then keeps the last file it wrote.
 #[must_use]
 pub fn save(tree: &Tree) -> Option<Vec<u8>> {
     tree.save(SCHEMA).ok()

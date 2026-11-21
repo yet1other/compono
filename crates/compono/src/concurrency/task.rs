@@ -102,6 +102,46 @@ impl<F: Future + Unpin> Future for CatchUnwind<F> {
     }
 }
 
+/// Reports the end of a task once, however it ends (2-2).
+///
+/// It lives inside the task's future. A task that finishes reports its message, a
+/// task that panics reports that it failed, and a task that its executor drops
+/// before it finishes, as Tokio does at shutdown, reports from `drop` that it
+/// failed. Each report wakes the host once, and the pump releases the guard.
+struct Report<C: Component>
+where
+    C::Msg: Send,
+{
+    sender: Option<crate::Sender<C>>,
+    id: u64,
+}
+
+impl<C: Component> Report<C>
+where
+    C::Msg: Send,
+{
+    fn finish(mut self, msg: Option<C::Msg>) {
+        if let Some(sender) = self.sender.take() {
+            let _closed = match msg {
+                Some(msg) => sender.push(Some(Box::new(msg)), Some(self.id)),
+                None => sender.fail(self.id),
+            };
+        }
+    }
+}
+
+impl<C: Component> Drop for Report<C>
+where
+    C::Msg: Send,
+{
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            // A tree already dropped, or a task already cancelled, ignores it.
+            let _closed = sender.fail(self.id);
+        }
+    }
+}
+
 impl<C: Component> Cx<'_, C>
 where
     C::Msg: Send,
@@ -113,7 +153,11 @@ where
     ///
     /// If `future` or `to_msg` panics, the panic stops at the task: its guard is
     /// released at the next [`Tree::pump`], and the component receives nothing
-    /// from it. Builds with `panic = "abort"` stop the process instead.
+    /// from it. Builds with `panic = "abort"` stop the process instead. A task
+    /// that the executor drops before it finishes, as at the shutdown of a
+    /// runtime, ends the same way: the host is woken once, the next pump releases
+    /// its guard, and [`Cx::cancel`] then returns `false` for it. A task cancelled
+    /// by the component may wake the host once more, for nothing.
     ///
     /// # Errors
     ///
@@ -123,16 +167,21 @@ where
         future: impl Future<Output = T> + Send + 'static,
         to_msg: impl FnOnce(T) -> C::Msg + Send + 'static,
     ) -> Result<TaskId, NoSpawner> {
+        if self.tree.spawner.is_none() {
+            return Err(NoSpawner);
+        }
         let id = self.tree.next_task;
         self.tree.next_task = id.wrapping_add(1);
-        let sender = self.sender();
+        let report = Report::<C> {
+            sender: Some(self.sender()),
+            id,
+        };
         let task = Box::pin(async move {
+            let report = report;
             let work = core::pin::pin!(async move { to_msg(future.await) });
             // A task that panicked still reports, so its guard is released.
-            let _ignored = match CatchUnwind(work).await {
-                Some(msg) => sender.push(Some(Box::new(msg)), Some(id)),
-                None => sender.fail(id),
-            };
+            let msg = CatchUnwind(work).await;
+            report.finish(msg);
         });
         let guard = self.tree.spawner.as_ref().ok_or(NoSpawner)?.spawn(task);
         if let Some(slot) = self.tree.slot_mut(self.me) {

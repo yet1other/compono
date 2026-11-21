@@ -25,6 +25,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "replace_router.cell";
     fn save(&self) -> u32 {
         self.0
     }
@@ -98,6 +99,7 @@ impl Component for Owner {
 
 impl Persist for Owner {
     type Saved = Saved;
+    const KIND: &'static str = "replace_router.owner";
     fn save(&self) -> Saved {
         Saved {
             stack: self.stack.as_ref().unwrap().snapshot(),
@@ -228,6 +230,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = Option<SavedStack<u32>>;
+    const KIND: &'static str = "replace_router.screens";
     fn save(&self) -> Self::Saved {
         self.stack.as_ref().map(Stack::snapshot)
     }

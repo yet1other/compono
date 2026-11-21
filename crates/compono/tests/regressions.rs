@@ -52,6 +52,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = Vec<u8>;
+    const KIND: &'static str = "regressions.cell";
     fn save(&self) -> Vec<u8> {
         self.value.clone()
     }
@@ -111,6 +112,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = SavedStack<u32>;
+    const KIND: &'static str = "regressions.screens";
     fn save(&self) -> SavedStack<u32> {
         self.stack.snapshot()
     }
@@ -603,6 +605,7 @@ impl Component for Numbered {
 }
 impl Persist for Numbered {
     type Saved = u32;
+    const KIND: &'static str = "regressions.numbered";
     fn save(&self) -> u32 {
         self.0
     }
@@ -618,6 +621,7 @@ impl Component for Crowd {
 }
 impl Persist for Crowd {
     type Saved = SavedStack<u32>;
+    const KIND: &'static str = "regressions.crowd";
     fn save(&self) -> SavedStack<u32> {
         self.stack.snapshot()
     }

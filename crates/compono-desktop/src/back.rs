@@ -24,6 +24,7 @@ pub enum Key {
     clippy::struct_excessive_bools,
     reason = "each modifier is an independent key"
 )]
+#[non_exhaustive]
 pub struct Modifiers {
     /// Control.
     pub ctrl: bool,
@@ -36,6 +37,17 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
+    /// The modifiers held: Control, Alt, Shift and the logo key (Command on macOS).
+    #[must_use]
+    pub const fn new(ctrl: bool, alt: bool, shift: bool, logo: bool) -> Self {
+        Self {
+            ctrl,
+            alt,
+            shift,
+            logo,
+        }
+    }
+
     const fn none(self) -> bool {
         !(self.ctrl || self.alt || self.shift || self.logo)
     }

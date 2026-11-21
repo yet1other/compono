@@ -8,6 +8,7 @@ use core::fmt;
 /// How many panels fit on screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum PanelsMode {
     /// Only the deepest open panel.
     #[default]

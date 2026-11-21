@@ -18,7 +18,7 @@
 //! file.clear()?;
 //! # std::fs::remove_dir_all(&dir)?;
 //!
-//! let command = Modifiers { logo: true, ..Modifiers::default() };
+//! let command = Modifiers::new(false, false, false, true);
 //! assert!(Convention::Mac.is_back(Key::BracketLeft, command));
 //! assert!(!Convention::Other.is_back(Key::BracketLeft, command));
 //! assert!(Convention::CURRENT.is_back(Key::Escape, Modifiers::default()));

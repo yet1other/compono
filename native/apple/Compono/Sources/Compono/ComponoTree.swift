@@ -4,20 +4,36 @@ import SwiftUI
 import os
 
 /// What an application's generated bindings provide to the package.
+///
+/// Each method may throw the bindings' error when the tree refuses a call, for
+/// example from the wrong thread or after a panic poisoned it. The package logs
+/// the error and goes on as if no tree were attached.
 @MainActor
 public protocol TreeBridge: AnyObject {
-    func pump()
+    func pump() throws
     /// Sets the phase: 0 for hidden, 1 for visible and 2 for focused.
-    func setPhase(code: Int32)
-    func back() -> Bool
+    func setPhase(code: Int32) throws
+    func back() throws -> Bool
     /// Starts a Back gesture and returns its target's address, or -1.
-    func backStart() -> Int64
-    func backCancel()
-    func backCommit() -> Bool
-    func contains(node: Int64) -> Bool
-    /// Encodes navigation and persistent state.
-    func save() -> Data
+    func backStart() throws -> Int64
+    func backCancel() throws
+    func backCommit() throws -> Bool
+    func contains(node: Int64) throws -> Bool
+    /// Encodes navigation and persistent state. When it throws, the package keeps
+    /// the last state it saved.
+    func save() throws -> Data
+    /// Frees trees whose bindings were released on another thread. The package
+    /// calls it on the main thread at every pump, even after the bindings it was
+    /// given are gone. Generated bindings export it as a static method.
+    static func collectRetired()
 }
+
+extension TreeBridge {
+    /// Does nothing, for bindings that release their tree only on its own thread.
+    public static func collectRetired() {}
+}
+
+private let log = Logger(subsystem: "Compono", category: "tree")
 
 /// A child of a router as the UI sees it.
 public protocol ComponoChild {
@@ -57,7 +73,11 @@ public final class ComponoTree {
     @ObservationIgnored private var committedTo: Int64?
     /// Weak, because the bindings hold this tree as their listener.
     @ObservationIgnored private weak var bridge: TreeBridge?
+    /// Frees trees released on another thread; outlives the bindings.
+    @ObservationIgnored private var collectRetired: () -> Void = {}
     @ObservationIgnored private var nodes: [Int64: NodeVersion] = [:]
+    /// The phase code of each connected scene that shows this tree.
+    @ObservationIgnored private var scenePhases: [UUID: Int32] = [:]
     @ObservationIgnored private var pruneAt = ComponoTree.minimumPruneSize
     @ObservationIgnored private let pumpPending = OSAllocatedUnfairLock(initialState: false)
 
@@ -77,6 +97,37 @@ public final class ComponoTree {
     /// Whoever creates the bindings keeps them, as ``ComponoRoot`` does.
     public func attach(_ bridge: TreeBridge) {
         self.bridge = bridge
+        let bindings = type(of: bridge)
+        collectRetired = { bindings.collectRetired() }
+    }
+
+    /// Runs `call` on the bindings, or gives `fallback` when none are attached or
+    /// the call throws, which is logged.
+    private func call<T>(_ name: String, _ fallback: T, _ call: (TreeBridge) throws -> T) -> T {
+        guard let bridge else { return fallback }
+        do {
+            return try call(bridge)
+        } catch {
+            log.error("\(name, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            return fallback
+        }
+    }
+
+    /// Records the phase of one scene and gives the tree the highest phase of all
+    /// connected scenes.
+    ///
+    /// The process has one tree, and on iPad each window is a scene with a phase of
+    /// its own. The tree is focused while any scene is active, and hidden only once
+    /// every scene is in the background.
+    func setScenePhase(_ code: Int32, for scene: UUID) {
+        scenePhases[scene] = code
+        setPhase(scenePhases.values.max() ?? 0)
+    }
+
+    /// Forgets a scene that disconnected, so it no longer holds the tree up.
+    func removeScene(_ scene: UUID) {
+        guard scenePhases.removeValue(forKey: scene) != nil else { return }
+        setPhase(scenePhases.values.max() ?? 0)
     }
 
     /// Makes the calling view depend on one component.
@@ -133,23 +184,24 @@ public final class ComponoTree {
 
     private func runPump() {
         pumpPending.withLock { $0 = false }
-        bridge?.pump()
+        call("pump", ()) { try $0.pump() }
+        collectRetired()
     }
 
     /// Delivers a Back press and returns whether it was handled.
     @discardableResult
     public func back() -> Bool {
-        bridge?.back() ?? false
+        call("back", false) { try $0.back() }
     }
 
     /// Sets the phase: 0 for hidden, 1 for visible and 2 for focused.
     public func setPhase(_ code: Int32) {
-        bridge?.setPhase(code: code)
+        call("setPhase", ()) { try $0.setPhase(code: code) }
     }
 
     /// Starts a Back gesture. Returns whether anything would handle it.
     public func beginGesture() -> Bool {
-        guard let bridge else { return false }
+        guard bridge != nil else { return false }
         if let previous = gesture {
             // A swipe while the last gesture animates to its end finishes that
             // gesture at once, so the swipe is not lost.
@@ -157,7 +209,7 @@ public final class ComponoTree {
             endGesture(commit: commit, target: previous.target)
         }
         committedTo = nil
-        let target = bridge.backStart()
+        let target = call("backStart", Int64(-1)) { try $0.backStart() }
         guard target != -1 else { return false }
         gestureSerial += 1
         gesture = BackGestureState(target: target, progress: 0)
@@ -213,15 +265,15 @@ public final class ComponoTree {
         settlingTo = nil
         if commit {
             committedTo = target
-            _ = bridge?.backCommit()
+            _ = call("backCommit", false) { try $0.backCommit() }
         } else {
-            bridge?.backCancel()
+            call("backCancel", ()) { try $0.backCancel() }
         }
     }
 
     /// Returns whether the component at `node` still exists.
     func contains(_ node: Int64) -> Bool {
-        bridge?.contains(node: node) ?? false
+        call("contains", false) { try $0.contains(node: node) }
     }
 
     func registerStack(_ owner: Int64) {
@@ -240,15 +292,16 @@ public final class ComponoTree {
         return true
     }
 
-    /// Encodes navigation and persistent state.
+    /// Encodes navigation and persistent state, or returns empty data when the
+    /// tree could not be saved, which ``ComponoRoot`` does not write.
     public func save() -> Data {
-        bridge?.save() ?? Data()
+        call("save", Data()) { try $0.save() }
     }
 
     /// Forgets destroyed components. Their addresses are never reused as-is.
     private func pruneIfLarge() {
-        guard nodes.count > pruneAt, let bridge else { return }
-        nodes = nodes.filter { bridge.contains(node: $0.key) }
+        guard nodes.count > pruneAt, bridge != nil else { return }
+        nodes = nodes.filter { node in call("contains", false) { try $0.contains(node: node.key) } }
         pruneAt = max(Self.minimumPruneSize, nodes.count * 2)
     }
 

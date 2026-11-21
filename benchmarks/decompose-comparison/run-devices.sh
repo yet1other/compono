@@ -9,13 +9,13 @@ adb=${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 
 if [[ -z ${DECOMPOSE_ANDROID_ONLY:-} ]]; then
-(cd rust && cargo build --release --target aarch64-apple-ios-sim 2>&1 | tail -1)
+(cd rust && cargo build --release --locked --target aarch64-apple-ios-sim 2>&1 | tail -1)
 limit 300 xcrun simctl spawn $udid "$PWD/rust/target/aarch64-apple-ios-sim/release/compare" > out/compono-ios.txt 2>&1
 echo "compono ios: $?"
 limit 700 xcrun simctl spawn $udid "$PWD/kotlin/kmp/build/bin/iosSimulatorArm64/releaseExecutable/kmp.kexe" > out/decompose-ios.txt 2>&1
 echo "decompose ios: $?"
 
-(cd rust && cargo ndk -t arm64-v8a -P 26 build --release 2>&1 | tail -1)
+(cd rust && cargo ndk -t arm64-v8a -P 26 build --release --locked 2>&1 | tail -1)
 $adb push rust/target/aarch64-linux-android/release/compare /data/local/tmp/compono-compare > /dev/null
 limit 300 $adb shell /data/local/tmp/compono-compare > out/compono-android.txt 2>&1
 echo "compono android: $?"

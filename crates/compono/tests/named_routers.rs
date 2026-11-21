@@ -24,6 +24,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "named_routers.cell";
     fn save(&self) -> u32 {
         self.0
     }
@@ -76,6 +77,7 @@ impl Component for Plain {
 
 impl Persist for Plain {
     type Saved = PlainSaved;
+    const KIND: &'static str = "named_routers.plain";
     fn save(&self) -> PlainSaved {
         PlainSaved {
             stack: self.stack.snapshot(),
@@ -104,10 +106,16 @@ fn mount_plain(tree: &mut Tree) -> Handle<Plain> {
     })
 }
 
-/// What `plain_launch` saves. Its keys are those saved before routers could be
-/// named, in the envelope whose entries record a kind and a version.
+/// What `plain_launch` saves, in the format whose entries record whether they
+/// went unclaimed through a run (5-4). Its keys are those saved before routers
+/// could be named.
 #[rustfmt::skip]
-const PLAIN_BYTES: &[u8] = &[130, 128, 128, 6, 1, 6, 1, 0, 0, 0, 10, 2, 0, 0, 1, 1, 2, 1, 0, 5, 1, 3, 0, 0, 0, 0, 0, 1, 10, 3, 0, 1, 0, 0, 0, 1, 11, 3, 0, 128, 128, 128, 128, 128, 128, 64, 0, 0, 0, 1, 12, 2, 0, 128, 128, 128, 128, 128, 128, 128, 128, 128, 1, 0, 0, 1, 13, 2, 0, 187, 160, 152, 155, 164, 142, 154, 200, 197, 1, 0, 0, 1, 14];
+const PLAIN_BYTES: &[u8] = &[131, 128, 128, 6, 1, 6, 1, 0, 173, 166, 206, 165, 210, 251, 181, 232, 104, 0, 10, 2, 0, 0, 1, 1, 2, 1, 0, 5, 1, 0, 3, 0, 0, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 10, 0, 3, 0, 1, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 11, 0, 3, 0, 128, 128, 128, 128, 128, 128, 64, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 12, 0, 2, 0, 128, 128, 128, 128, 128, 128, 128, 128, 128, 1, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 13, 0, 2, 0, 187, 160, 152, 155, 164, 142, 154, 200, 197, 1, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 14, 0];
+
+/// The same state as `1.0.0-rc` wrote it, whose entries record a kind and a
+/// version only. It is still read.
+#[rustfmt::skip]
+const LEGACY_BYTES: &[u8] = &[130, 128, 128, 6, 1, 6, 1, 0, 173, 166, 206, 165, 210, 251, 181, 232, 104, 0, 10, 2, 0, 0, 1, 1, 2, 1, 0, 5, 1, 3, 0, 0, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 10, 3, 0, 1, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 11, 3, 0, 128, 128, 128, 128, 128, 128, 64, 0, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 12, 2, 0, 128, 128, 128, 128, 128, 128, 128, 128, 128, 1, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 13, 2, 0, 187, 160, 152, 155, 164, 142, 154, 200, 197, 1, 167, 180, 132, 173, 185, 238, 185, 162, 72, 0, 1, 14];
 
 /// Two screens holding 10 and 11, a dialog holding 12, and children holding 13 and 14.
 fn plain_launch() -> Vec<u8> {
@@ -137,7 +145,14 @@ fn unnamed_routers_save_the_same_bytes_as_before() {
 
 #[test]
 fn unnamed_routers_restore_bytes_saved_before() {
-    let (mut tree, _outcome) = Tree::with_saved(NullHost, PLAIN_BYTES, 1);
+    for bytes in [PLAIN_BYTES, LEGACY_BYTES] {
+        restores_plain(bytes);
+    }
+}
+
+fn restores_plain(bytes: &[u8]) {
+    let (mut tree, outcome) = Tree::with_saved(NullHost, bytes, 1);
+    assert_eq!(outcome, compono::RestoreOutcome::Restored);
     let plain = mount_plain(&mut tree);
     let top = *tree.get(plain).unwrap().stack.active();
     assert_eq!(value(&tree, top), 11);
@@ -190,6 +205,7 @@ impl Component for App {
 
 impl Persist for App {
     type Saved = AppSaved;
+    const KIND: &'static str = "named_routers.app";
     fn save(&self) -> AppSaved {
         AppSaved {
             numbered: self.numbered.snapshot(),
@@ -305,6 +321,7 @@ impl Component for Twins {
 
 impl Persist for Twins {
     type Saved = TwinsSaved;
+    const KIND: &'static str = "named_routers.twins";
     fn save(&self) -> TwinsSaved {
         TwinsSaved {
             first: self.first.snapshot(),
@@ -380,6 +397,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = SavedStack<u32>;
+    const KIND: &'static str = "named_routers.screens";
     fn save(&self) -> SavedStack<u32> {
         self.stack.as_ref().unwrap().snapshot()
     }

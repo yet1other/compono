@@ -15,7 +15,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** What an application's generated bindings provide to the library. */
+/**
+ * What an application's generated bindings provide to the library.
+ *
+ * Each method may throw the bindings' exception when the tree refuses a call, for
+ * example from the wrong thread or after a panic poisoned it. The library logs it
+ * and goes on as if no tree were attached.
+ */
 interface TreeBridge {
     fun pump()
 
@@ -33,8 +39,23 @@ interface TreeBridge {
 
     fun contains(node: Long): Boolean
 
-    /** Encodes navigation and persistent state. */
+    /**
+     * Encodes navigation and persistent state, or returns an empty array when the
+     * tree cannot be saved. The library then keeps the last state it saved.
+     */
     fun save(): ByteArray
+
+    /**
+     * Frees trees whose bindings were released on another thread. The library calls
+     * it on the main thread at every pump, even after [ComponoTree.detach].
+     * Generated bindings export it as a function of the bindings' companion.
+     */
+    fun collectRetired() {}
+}
+
+/** Where the library reports a call that failed. Tests replace it. */
+internal var reportFailure: (String, Throwable) -> Unit = { message, error ->
+    android.util.Log.e("Compono", message, error)
 }
 
 private const val MINIMUM_PRUNE_SIZE = 256
@@ -97,9 +118,33 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
 
     internal val trackedNodes: Int get() = versions.size
 
+    /** Frees trees released on another thread. It outlives [detach]. */
+    private var collectRetired: () -> Unit = {}
+
     /** Connects the tree's bindings, which may already have committed. */
     fun attach(bridge: TreeBridge) {
         this.bridge = bridge
+        collectRetired = bridge::collectRetired
+    }
+
+    /** Runs [call] on the bindings, or gives [fallback] when none are attached or it throws. */
+    private inline fun <T> call(name: String, fallback: T, call: (TreeBridge) -> T): T {
+        val bridge = bridge ?: return fallback
+        return try {
+            call(bridge)
+        } catch (error: Exception) {
+            reportFailure("$name failed", error)
+            fallback
+        }
+    }
+
+    /**
+     * Disconnects the bindings before they are closed. A pump already posted then
+     * does nothing when it runs, and every later call answers as if no tree were
+     * attached.
+     */
+    fun detach() {
+        bridge = null
     }
 
     /** Makes the calling composable depend on one component. */
@@ -109,13 +154,19 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
 
     /** Receives a commit. Call from the bindings' listener. */
     override fun commit(dirty: LongArray, canBack: Boolean) {
-        for (node in dirty) {
-            versions[node]?.let { it.intValue += 1 }
+        // The JNI glue swallows an exception thrown from here (6-5), so it is
+        // caught and logged instead of being lost.
+        try {
+            for (node in dirty) {
+                versions[node]?.let { it.intValue += 1 }
+            }
+            if (this.canBack != canBack) {
+                this.canBack = canBack
+            }
+            pruneIfLarge()
+        } catch (error: Exception) {
+            reportFailure("commit failed", error)
         }
-        if (this.canBack != canBack) {
-            this.canBack = canBack
-        }
-        pruneIfLarge()
     }
 
     /** Asks for one pump on the main thread. Any number of requests become one. */
@@ -126,23 +177,28 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
             post(
                 Runnable {
                     pumpPending.set(false)
-                    bridge?.pump()
+                    call("pump", Unit) { it.pump() }
+                    try {
+                        collectRetired()
+                    } catch (error: Exception) {
+                        reportFailure("collectRetired failed", error)
+                    }
                 },
             )
         }
     }
 
     /** Delivers a Back press and returns whether it was handled. */
-    fun back(): Boolean = bridge?.back() ?: false
+    fun back(): Boolean = call("back", false) { it.back() }
 
     /** Sets the phase: 0 for hidden, 1 for visible and 2 for focused. */
     fun setPhase(code: Int) {
-        bridge?.setPhase(code)
+        call("setPhase", Unit) { it.setPhase(code) }
     }
 
     /** Starts a Back gesture. Returns whether anything would handle it. */
     fun beginGesture(): Boolean {
-        val bridge = bridge ?: return false
+        if (bridge == null) return false
         val previous = gesture
         if (previous != null) {
             // A press while the last gesture animates to its end finishes that
@@ -151,7 +207,7 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
             finish(previous, commit)
         }
         committedTo = null
-        val target = bridge.backStart()
+        val target = call("backStart", -1L) { it.backStart() }
         if (target == -1L) return false
         gesture = BackGestureState(target)
         return true
@@ -199,14 +255,14 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
         gesture = null
         if (commit) {
             committedTo = current.target
-            bridge?.backCommit()
+            call("backCommit", false) { it.backCommit() }
         } else {
-            bridge?.backCancel()
+            call("backCancel", Unit) { it.backCancel() }
         }
     }
 
     /** Returns whether the component at [node] still exists. */
-    internal fun containsNode(node: Long): Boolean = bridge?.contains(node) ?: false
+    internal fun containsNode(node: Long): Boolean = call("contains", false) { it.contains(node) }
 
     internal fun registerStack(owner: Long) {
         stacks[owner] = (stacks[owner] ?: 0) + 1
@@ -225,12 +281,12 @@ class ComponoTree(private val post: (Runnable) -> Unit = mainThreadPost()) : Com
     }
 
     /** Encodes navigation and persistent state. */
-    fun save(): ByteArray = bridge?.save() ?: ByteArray(0)
+    fun save(): ByteArray = call("save", ByteArray(0)) { it.save() }
 
     private fun pruneIfLarge() {
-        val bridge = bridge ?: return
+        if (bridge == null) return
         if (versions.size <= pruneAt) return
-        versions.keys.retainAll { bridge.contains(it) }
+        versions.keys.retainAll { node -> call("contains", false) { it.contains(node) } }
         pruneAt = maxOf(MINIMUM_PRUNE_SIZE, versions.size * 2)
     }
 }

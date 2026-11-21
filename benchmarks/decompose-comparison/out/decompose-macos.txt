@@ -1,0 +1,10 @@
+stack_push_pop_1	8751.0	8486.6	9511.1
+stack_push_pop_10	18141.8	14805.8	20412.2
+stack_push_pop_100	59415.3	59122.0	60603.0
+deep_stack_per_entry	170201.8	169721.5	170571.4
+slot_open_close	3194.7	3175.1	3215.5
+pages_select_next	25494.6	25373.7	25712.7
+items_scroll_one_row	8630.8	8524.1	9002.5
+update_child	78.0	77.8	78.5
+create_destroy_tree	4166.9	4151.7	4189.6
+# done 52030989685187

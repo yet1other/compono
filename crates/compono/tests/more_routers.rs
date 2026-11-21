@@ -25,6 +25,7 @@ impl Component for Leaf {
 }
 impl Persist for Leaf {
     type Saved = u32;
+    const KIND: &'static str = "more_routers.leaf";
     fn save(&self) -> u32 {
         self.0
     }
@@ -49,6 +50,7 @@ impl Component for Book {
 }
 impl Persist for Book {
     type Saved = SavedPages<u32>;
+    const KIND: &'static str = "more_routers.book";
     fn save(&self) -> SavedPages<u32> {
         self.pages.snapshot()
     }

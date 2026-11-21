@@ -11,6 +11,7 @@ const REDUCED_MILLIS: u16 = 150;
 
 /// What the user asked of motion, which the adapter reads from the system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum MotionPreference {
     #[default]
     Full,
@@ -23,6 +24,7 @@ pub enum MotionPreference {
 
 /// The motion a router uses: its transition, timing and Back gesture.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Motion {
     pub transition: Transition,
     pub timing: Timing,

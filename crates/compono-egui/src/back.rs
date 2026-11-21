@@ -12,12 +12,12 @@ fn key(key: egui::Key) -> Key {
 }
 
 const fn modifiers(modifiers: egui::Modifiers) -> Modifiers {
-    Modifiers {
-        ctrl: modifiers.ctrl,
-        alt: modifiers.alt,
-        shift: modifiers.shift,
-        logo: modifiers.mac_cmd,
-    }
+    Modifiers::new(
+        modifiers.ctrl,
+        modifiers.alt,
+        modifiers.shift,
+        modifiers.mac_cmd,
+    )
 }
 
 /// Returns whether the user asked for Back during this frame.

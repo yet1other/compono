@@ -16,12 +16,7 @@ fn key(key: &str) -> Key {
 #[must_use]
 pub fn is_back_key(keystroke: &Keystroke) -> bool {
     let held = keystroke.modifiers;
-    let modifiers = Modifiers {
-        ctrl: held.control,
-        alt: held.alt,
-        shift: held.shift,
-        logo: held.platform,
-    };
+    let modifiers = Modifiers::new(held.control, held.alt, held.shift, held.platform);
     Convention::CURRENT.is_back(key(&keystroke.key), modifiers)
 }
 

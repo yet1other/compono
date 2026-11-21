@@ -4,6 +4,7 @@ use crate::math::clamp01;
 
 /// A curve from linear time to eased progress, both `0..=1`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Easing {
     Linear,
     /// A CSS cubic Bézier through (0, 0), (x1, y1), (x2, y2) and (1, 1).

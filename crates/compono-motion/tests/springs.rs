@@ -65,17 +65,11 @@ fn springs_settle_in_their_measured_times() {
 
 #[test]
 fn degenerate_springs_stay_bounded() {
-    let slack = Spring {
-        damping_ratio: 0.0,
-        stiffness: 100.0,
-    };
+    let slack = Spring::new(0.0, 100.0);
     assert_eq!(slack.settle_time(), 10.0);
     let (x, _) = slack.position(1e9, 0.0);
     assert!(x.is_finite());
-    let none = Spring {
-        damping_ratio: 1.0,
-        stiffness: 0.0,
-    };
+    let none = Spring::new(1.0, 0.0);
     assert_eq!(none.position(1.0, 0.0), (0.0, 0.0));
     assert_eq!(Spring::from_response(0.0, 1.0).stiffness, 0.0);
 }

@@ -5,6 +5,7 @@ use crate::spring::Spring;
 
 /// How long a transition takes and along which curve.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Timing {
     /// A fixed duration along an easing curve.
     Tween { millis: u16, easing: Easing },

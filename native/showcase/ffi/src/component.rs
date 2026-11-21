@@ -1,6 +1,6 @@
 //! What every exported component shares: a weak link to the tree and its address.
 
-use boltffi::data;
+use boltffi::{data, error};
 use compono::{Component, NodeId, Tree};
 use compono_ffi::{NativeError, NativeTree, phase_code};
 use std::sync::{Arc, Weak};
@@ -17,20 +17,62 @@ pub struct ChildRef {
     pub phase: i32,
 }
 
-/// Returns the value of a tree call, or `None` when the tree or component is gone.
+/// Why a call into the tree did nothing, as Swift throws it and Kotlin raises it.
 ///
-/// A native UI meets a missing component in normal use, for example when a tap
-/// reaches a component that was just removed. Any other error is a bug in the
-/// native caller, such as a call from another thread, so a debug build stops at it.
-#[track_caller]
-pub(crate) fn checked<T>(result: Result<T, NativeError>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            debug_assert!(!error.is_misuse(), "native call failed: {error}");
-            None
+/// It names the kind of [`NativeError`]. A missing component is normal use and is
+/// not an error: those calls give nothing instead.
+#[error]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeError {
+    /// Called from a thread that does not own the tree.
+    WrongThread,
+    /// Called from inside another call on the tree.
+    Busy,
+    /// The tree's state could not be saved.
+    Save,
+    /// The tree's message queue is closed.
+    QueueClosed,
+    /// An earlier call panicked, so the tree runs nothing more.
+    Poisoned,
+    /// A phase code other than 0, 1 or 2.
+    UnknownPhase,
+    /// Another failure of the tree.
+    Other,
+}
+
+impl From<NativeError> for TreeError {
+    fn from(error: NativeError) -> Self {
+        match error {
+            NativeError::WrongThread => Self::WrongThread,
+            NativeError::Busy => Self::Busy,
+            NativeError::Save => Self::Save,
+            NativeError::QueueClosed => Self::QueueClosed,
+            NativeError::Poisoned => Self::Poisoned,
+            _ => Self::Other,
         }
     }
+}
+
+/// Returns the value of a tree call, `Ok(None)` when the tree or component is
+/// gone, and the error otherwise, for a method that throws it (6-3).
+///
+/// Nothing here can panic, because it runs inside an `extern "C"` function.
+pub(crate) fn throwing<T>(result: Result<T, NativeError>) -> Result<Option<T>, TreeError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(NativeError::Gone) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Returns the value of a tree call, or `None` when it did nothing.
+///
+/// A component object's methods answer with nothing when their component is
+/// gone, as a native UI meets in normal use. A misuse, such as a call from
+/// another thread, also gives nothing here, and the root's methods, which every
+/// UI calls on each change, throw it.
+pub(crate) fn checked<T>(result: Result<T, NativeError>) -> Option<T> {
+    result.ok()
 }
 
 /// The tree, held weakly so that a component object never keeps it alive.

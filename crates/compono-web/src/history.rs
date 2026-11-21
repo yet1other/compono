@@ -10,7 +10,7 @@
 //! use compono::router::link::Paths;
 //! use compono::router::stack::Stack;
 //! use compono::{Component, Cx, Tree};
-//! use compono_web::history::{Browser, EntryState, History};
+//! use compono_web::history::{Browser, EntryState, History, Refused};
 //! # use compono::{Commit, Host};
 //! # struct Quiet;
 //! # impl Host for Quiet {
@@ -40,11 +40,13 @@
 //! struct Recorded(Vec<String>);
 //!
 //! impl Browser for Recorded {
-//!     fn push(&mut self, path: &str, _state: EntryState) {
+//!     fn push(&mut self, path: &str, _state: EntryState) -> Result<(), Refused> {
 //!         self.0.push(format!("push {path}"));
+//!         Ok(())
 //!     }
-//!     fn replace(&mut self, path: &str, _state: EntryState) {
+//!     fn replace(&mut self, path: &str, _state: EntryState) -> Result<(), Refused> {
 //!         self.0.push(format!("replace {path}"));
+//!         Ok(())
 //!     }
 //!     fn go(&mut self, delta: i32) {
 //!         self.0.push(format!("go {delta}"));
@@ -93,6 +95,7 @@ use compono::router::stack::Stack;
 
 /// What the application stores in each history entry it creates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EntryState {
     /// The application's saved-state schema when the entry was made.
     pub schema: u32,
@@ -103,12 +106,45 @@ pub struct EntryState {
     pub index: u32,
 }
 
+impl EntryState {
+    /// The state of entry `index` of the run `epoch`, under the schema `schema`.
+    #[must_use]
+    pub const fn new(schema: u32, epoch: u32, index: u32) -> Self {
+        Self {
+            schema,
+            epoch,
+            index,
+        }
+    }
+}
+
+/// The browser refused to add or change a history entry, as a browser does when
+/// `pushState` is called too often.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refused;
+
+impl core::fmt::Display for Refused {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the browser refused to change its history")
+    }
+}
+
+impl core::error::Error for Refused {}
+
 /// The browser's history, as [`History`] uses it.
 pub trait Browser {
     /// Adds an entry after the current one, dropping any forward entries.
-    fn push(&mut self, path: &str, state: EntryState);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Refused`] when the browser added nothing.
+    fn push(&mut self, path: &str, state: EntryState) -> Result<(), Refused>;
     /// Changes the current entry.
-    fn replace(&mut self, path: &str, state: EntryState);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Refused`] when the browser changed nothing.
+    fn replace(&mut self, path: &str, state: EntryState) -> Result<(), Refused>;
     /// Moves `delta` entries. The browser reports arrival later, through
     /// [`History::popped`].
     fn go(&mut self, delta: i32);
@@ -234,10 +270,7 @@ where
             Some(index) if index <= self.current => {
                 let moved = index < self.current;
                 self.current = index;
-                moved.then_some(Navigation {
-                    keep: index + 1,
-                    open: Vec::new(),
-                })
+                moved.then_some(Navigation::new(index + 1, Vec::new()))
             }
             Some(index) => {
                 if let Some(navigation) = self.forward(index, path) {
@@ -275,7 +308,7 @@ where
         }
         let keep = self.current + 1;
         self.current = index;
-        Some(Navigation { keep, open })
+        Some(Navigation::new(keep, open))
     }
 
     /// Brings the browser in line with `stack`. Cheap when nothing changed.
@@ -327,12 +360,17 @@ where
 
     /// Writes stack entries from `from` on, replacing the current entry when
     /// `from` is the current one and pushing the rest.
+    ///
+    /// The model follows only what the browser accepted. At the first entry it
+    /// refuses, writing stops, and the next [`History::sync`] tries again from
+    /// there, so Back never leaves the site while the stack has entries below.
     fn write<H: 'static, C: Component>(
         &mut self,
         browser: &mut impl Browser,
         stack: &Stack<P::Route, H, C>,
         from: usize,
     ) {
+        let start = self.current;
         for (index, (key, route)) in stack.entries().enumerate().skip(from) {
             let path = self.paths.path(route);
             let state = EntryState {
@@ -344,19 +382,23 @@ where
                 key: Some(key),
                 path,
             };
-            if index == self.current && from == self.current {
-                browser.replace(&entry.path, state);
+            if index == start && from == start {
+                if browser.replace(&entry.path, state).is_err() {
+                    return;
+                }
                 // Replacing an entry leaves the browser's forward entries alone.
                 match self.entries.get_mut(index) {
                     Some(slot) => *slot = entry,
                     None => self.entries.push(entry),
                 }
             } else {
-                browser.push(&entry.path, state);
+                if browser.push(&entry.path, state).is_err() {
+                    return;
+                }
                 self.entries.truncate(index);
                 self.entries.push(entry);
             }
+            self.current = index;
         }
-        self.current = stack.depth() - 1;
     }
 }

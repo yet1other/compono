@@ -108,43 +108,21 @@ fn reduced_motion_fades_without_travel() {
             Direction::ExitBack,
         ] {
             let style = reduced.transition.layer(direction, 0.4, SIZE);
-            assert_eq!(
-                LayerStyle {
-                    opacity: 1.0,
-                    ..style
-                },
-                LayerStyle::REST,
-                "{name} {direction:?}"
-            );
+            let mut opaque = style;
+            opaque.opacity = 1.0;
+            assert_eq!(opaque, LayerStyle::REST, "{name} {direction:?}");
         }
-        let event = BackEvent {
-            progress: 0.4,
-            edge: SwipeEdge::Left,
-            touch_y: 30.0,
-        };
+        let event = BackEvent::new(0.4, SwipeEdge::Left, 30.0);
         let frame = reduced.back.frame(event, 0.0, SIZE);
         assert_eq!(frame.under, LayerStyle::REST, "{name}");
-        assert_eq!(
-            LayerStyle {
-                opacity: 1.0,
-                ..frame.over
-            },
-            LayerStyle::REST,
-            "{name}"
-        );
+        let mut over = frame.over;
+        over.opacity = 1.0;
+        assert_eq!(over, LayerStyle::REST, "{name}");
     }
     let gesture = Motion::material()
         .for_preference(MotionPreference::Reduced)
         .back
-        .frame(
-            BackEvent {
-                progress: 0.4,
-                edge: SwipeEdge::Left,
-                touch_y: 0.0,
-            },
-            0.0,
-            SIZE,
-        );
+        .frame(BackEvent::new(0.4, SwipeEdge::Left, 0.0), 0.0, SIZE);
     assert!((gesture.over.opacity - 0.6).abs() < 1e-6);
 }
 

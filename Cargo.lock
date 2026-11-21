@@ -1320,10 +1320,13 @@ dependencies = [
 [[package]]
 name = "compono-desktop"
 version = "1.0.0-rc"
+dependencies = [
+ "compono",
+]
 
 [[package]]
 name = "compono-egui"
-version = "1.0.0-rc"
+version = "0.1.0-rc"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1342,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "compono-gpui"
-version = "1.0.0-rc"
+version = "0.1.0-rc"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1353,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "compono-iced"
-version = "1.0.0-rc"
+version = "0.1.0-rc"
 dependencies = [
  "compono",
  "compono-desktop",
@@ -1365,6 +1368,9 @@ dependencies = [
 [[package]]
 name = "compono-motion"
 version = "1.0.0-rc"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "compono-test"
@@ -3886,9 +3892,9 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+checksum = "411fdef4df93751117bd9ef8caa0e7f99c65dafec5bd84313eb8e2fdd75e32f2"
 dependencies = [
  "hash32",
  "stable_deref_trait",

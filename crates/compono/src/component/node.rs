@@ -1,5 +1,5 @@
 use crate::tree::Tree;
-use crate::{Component, Cx, NodeId, Phase};
+use crate::{Component, Cx, NodeId, Phase, StaleHandle};
 use alloc::boxed::Box;
 use core::any::Any;
 
@@ -7,7 +7,8 @@ use core::any::Any;
 pub(crate) trait Node {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn accept(&mut self, msg: Box<dyn Any>, tree: &mut Tree, me: NodeId);
+    fn accept(&mut self, msg: Box<dyn Any>, tree: &mut Tree, me: NodeId)
+    -> Result<(), StaleHandle>;
     fn phase_changed(&mut self, phase: Phase, tree: &mut Tree, me: NodeId);
     fn wants_back(&self) -> bool;
     fn run_back(&mut self, tree: &mut Tree, me: NodeId);
@@ -22,18 +23,22 @@ impl<C: Component> Node for C {
         self
     }
 
-    fn accept(&mut self, msg: Box<dyn Any>, tree: &mut Tree, me: NodeId) {
-        // Only a typed handle or sender queues a message, and a node's slot
-        // generation changes before it holds another component.
-        debug_assert!(
-            msg.is::<C::Msg>(),
-            "a message reached a component of another type"
-        );
-        if let Ok(msg) = msg.downcast::<C::Msg>() {
-            let mut cx = Cx::new(tree, me);
-            self.update(*msg, &mut cx);
-            cx.finish();
-        }
+    /// Delivers a queued message, or refuses one meant for another type (4-2).
+    ///
+    /// `Cx::send` checks the type before it queues, and a slot's generation
+    /// changes before it holds another component, so the refusal is only a
+    /// guard. It never panics.
+    fn accept(
+        &mut self,
+        msg: Box<dyn Any>,
+        tree: &mut Tree,
+        me: NodeId,
+    ) -> Result<(), StaleHandle> {
+        let msg = msg.downcast::<C::Msg>().map_err(|_other| StaleHandle)?;
+        let mut cx = Cx::new(tree, me);
+        self.update(*msg, &mut cx);
+        cx.finish();
+        Ok(())
     }
 
     fn phase_changed(&mut self, phase: Phase, tree: &mut Tree, me: NodeId) {

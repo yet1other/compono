@@ -43,8 +43,11 @@ public final class ComponoRoot<Bridge: TreeBridge> {
     }
 
     /// Writes `state` to the state file, replacing it whole.
+    ///
+    /// Empty data means the tree could not be saved, for example because it is
+    /// poisoned, so the last good file is kept.
     public func persist(_ state: Data) {
-        guard let stateFile else { return }
+        guard let stateFile, !state.isEmpty else { return }
         try? state.write(to: stateFile, options: .atomic)
     }
 }

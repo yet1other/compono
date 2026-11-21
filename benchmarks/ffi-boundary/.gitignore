@@ -1,7 +1,7 @@
 dist/
-out/
 target/
-Cargo.lock
+# Built binaries; the text results beside them are kept.
+out/bench-*
 harness/android/.gradle/
 harness/android/app/build/
 harness/android/build/

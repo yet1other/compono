@@ -24,8 +24,9 @@ impl Tree {
     /// could otherwise hold the thread for as long as they like. Past the
     /// limit the operation commits what it has done, keeps the rest waiting in
     /// order and wakes the host, whose next [`Tree::pump`](crate::Tree::pump)
-    /// or any other operation continues it. An entry the limit stops halfway
-    /// stays hidden until the rest of it is removed.
+    /// or any other operation continues it. The operation still succeeds:
+    /// [`Tree::send`] returns `Ok(())` once its own message is delivered. An entry
+    /// the limit stops halfway stays hidden until the rest of it is removed.
     ///
     /// Polls of tasks started with [`Cx::perform_local`](crate::Cx::perform_local)
     /// have their own limit, set by `Tree::set_poll_limit`.
@@ -129,9 +130,22 @@ impl Tree {
             *budget -= 1;
             match work {
                 Work::Msg { to, payload } => {
-                    self.with_node(to, |node, tree| node.accept(payload, tree, to));
+                    // A message for a component of another type is dropped.
+                    self.with_node(to, |node, tree| {
+                        let _mistyped = node.accept(payload, tree, to);
+                    });
                 }
                 Work::Output { from, payload } => self.deliver_output(from, payload),
+                Work::Orphan {
+                    parent,
+                    route,
+                    payload,
+                } => {
+                    // A parent removed too receives nothing.
+                    self.with_node(parent, |node, tree| {
+                        route(node.as_any_mut(), payload, tree, parent);
+                    });
+                }
             }
         }
         self.work.is_empty()
@@ -141,16 +155,16 @@ impl Tree {
         let Some(slot) = self.slot_mut(from) else {
             return;
         };
-        let (Some(parent), Some(route)) = (slot.parent, slot.route.take()) else {
+        if slot.queued_outputs < u16::MAX {
+            slot.queued_outputs = slot.queued_outputs.saturating_sub(1);
+        }
+        let (Some(parent), Some(route)) = (slot.parent, slot.route.clone()) else {
             return;
         };
+        // The route may remove the child, so it runs from its own reference.
         self.with_node(parent, |node, tree| {
-            route(node.as_any_mut(), payload, tree, parent)
+            route(node.as_any_mut(), payload, tree, parent);
         });
-        // The route is usually what removed the child; then it is dropped here.
-        if let Some(slot) = self.slot_mut(from) {
-            slot.route = Some(route);
-        }
     }
 
     pub(crate) fn begin_scope(&mut self, owner: NodeId, base: u64) -> Option<OpenScope> {

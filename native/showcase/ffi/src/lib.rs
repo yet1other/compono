@@ -10,8 +10,9 @@ mod component;
 mod feature;
 
 use boltffi::export;
-use component::{Ctx, checked};
-use compono::{Handle, Phase};
+pub use component::TreeError;
+use component::{Ctx, checked, throwing};
+use compono::Handle;
 use compono_ffi::{NO_NODE, NativeTree, Platform, phase_from_code};
 use compono_tokio::TokioSpawner;
 use feature::root::{RootComponent, root_component};
@@ -93,55 +94,101 @@ impl ShowcaseApp {
         }
     }
 
+    /// Frees trees whose `ShowcaseApp` was released on another thread. Call it on
+    /// the main thread, at every pump (6-4).
+    pub fn collect_retired() {
+        compono_ffi::collect_retired();
+    }
+
     /// The root component.
     pub fn root(&self) -> RootComponent {
         root_component(Ctx::new(&self.tree), self.root)
     }
 
-    pub fn pump(&self) {
-        checked(self.tree.pump());
+    /// Delivers work that arrived from other threads.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn pump(&self) -> Result<(), TreeError> {
+        throwing(self.tree.pump()).map(drop)
     }
 
     /// Sets the phase: 0 for hidden, 1 for visible and 2 for focused.
-    pub fn set_phase(&self, code: i32) {
-        let phase = u8::try_from(code).ok().and_then(phase_from_code);
-        debug_assert!(phase.is_some(), "unknown phase code {code}");
-        checked(self.tree.set_phase(phase.unwrap_or(Phase::Hidden)));
+    ///
+    /// # Errors
+    ///
+    /// Throws [`TreeError::UnknownPhase`] for any other code, or the tree's error.
+    pub fn set_phase(&self, code: i32) -> Result<(), TreeError> {
+        let phase = u8::try_from(code)
+            .ok()
+            .and_then(phase_from_code)
+            .ok_or(TreeError::UnknownPhase)?;
+        throwing(self.tree.set_phase(phase)).map(drop)
     }
 
-    pub fn back(&self) -> bool {
-        checked(self.tree.back()).unwrap_or(false)
+    /// Delivers a Back press and returns whether it was handled.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn back(&self) -> Result<bool, TreeError> {
+        Ok(throwing(self.tree.back())?.unwrap_or(false))
     }
 
     /// Starts a Back gesture and returns its target's address, or `NO_NODE`.
-    pub fn back_start(&self) -> i64 {
-        checked(self.tree.back_start())
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn back_start(&self) -> Result<i64, TreeError> {
+        Ok(throwing(self.tree.back_start())?
             .flatten()
-            .map_or(NO_NODE, u64::cast_signed)
+            .map_or(NO_NODE, u64::cast_signed))
     }
 
-    pub fn back_cancel(&self) {
-        checked(self.tree.back_cancel());
+    /// Abandons a Back gesture.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn back_cancel(&self) -> Result<(), TreeError> {
+        throwing(self.tree.back_cancel()).map(drop)
     }
 
-    pub fn back_commit(&self) -> bool {
-        checked(self.tree.back_commit()).unwrap_or(false)
+    /// Completes a Back gesture and returns whether Back was handled.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn back_commit(&self) -> Result<bool, TreeError> {
+        Ok(throwing(self.tree.back_commit())?.unwrap_or(false))
     }
 
-    /// Encodes navigation and persistent state. Empty if it could not be saved.
-    pub fn save(&self) -> Vec<u8> {
-        checked(self.tree.save(SCHEMA)).unwrap_or_default()
+    /// Encodes navigation and persistent state.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`], such as [`TreeError::Poisoned`], when nothing could
+    /// be saved. The caller keeps the state it saved before.
+    pub fn save(&self) -> Result<Vec<u8>, TreeError> {
+        Ok(throwing(self.tree.save(SCHEMA))?.unwrap_or_default())
     }
 
-    pub fn contains(&self, node: i64) -> bool {
+    /// Returns whether the component at `node` still exists.
+    ///
+    /// # Errors
+    ///
+    /// Throws a [`TreeError`] when the tree refuses the call.
+    pub fn contains(&self, node: i64) -> Result<bool, TreeError> {
         let node = compono::NodeId::from_bits(node.cast_unsigned());
-        checked(self.tree.read(|tree| tree.contains(node))).unwrap_or(false)
+        Ok(throwing(self.tree.read(|tree| tree.contains(node)))?.unwrap_or(false))
     }
 }
 
-#[cfg(all(test, debug_assertions))]
+#[cfg(test)]
 mod tests {
-    use super::{Listener, ShowcaseApp};
+    use super::{Listener, ShowcaseApp, TreeError};
     use std::sync::Arc;
 
     struct Silent;
@@ -155,16 +202,18 @@ mod tests {
     }
 
     #[test]
-    fn a_call_from_another_thread_stops_a_debug_build() {
+    fn a_call_from_another_thread_throws_its_kind() {
+        // 6-3: the error reaches the native side, in every build, without a panic.
         let app = app();
         let elsewhere = std::thread::scope(|scope| scope.spawn(|| app.back()).join());
-        assert!(elsewhere.is_err(), "the wrong thread went unnoticed");
+        assert_eq!(elsewhere.ok(), Some(Err(TreeError::WrongThread)));
+        let elsewhere = std::thread::scope(|scope| scope.spawn(|| app.save()).join());
+        assert_eq!(elsewhere.ok(), Some(Err(TreeError::WrongThread)));
     }
 
     #[test]
-    #[should_panic(expected = "phase code")]
-    fn an_unknown_phase_code_stops_a_debug_build() {
-        app().set_phase(7);
+    fn an_unknown_phase_code_throws() {
+        assert_eq!(app().set_phase(7), Err(TreeError::UnknownPhase));
     }
 
     #[test]
@@ -179,17 +228,17 @@ mod tests {
     #[test]
     fn no_back_handler_is_reported_as_no_node() {
         let app = app();
-        app.set_phase(2);
-        assert_eq!(app.back_start(), compono_ffi::NO_NODE);
+        app.set_phase(2).unwrap();
+        assert_eq!(app.back_start(), Ok(compono_ffi::NO_NODE));
     }
 
     #[test]
     fn a_call_on_the_owning_thread_works() {
         let app = app();
-        app.set_phase(2);
-        app.pump();
-        assert!(!app.back(), "the root screen handles no Back");
-        assert!(!app.save().is_empty());
+        app.set_phase(2).unwrap();
+        app.pump().unwrap();
+        assert_eq!(app.back(), Ok(false), "the root screen handles no Back");
+        assert!(!app.save().unwrap().is_empty());
     }
 }
 

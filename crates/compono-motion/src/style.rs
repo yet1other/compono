@@ -21,6 +21,7 @@ impl Size {
 /// it about its centre, sets its opacity, clips it to `corner_radius`, and then
 /// paints black over it at `dim`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct LayerStyle {
     /// Horizontal offset as a share of the router's width. Positive moves right.
     pub offset_x: f32,

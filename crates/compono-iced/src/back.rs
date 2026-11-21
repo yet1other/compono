@@ -17,12 +17,12 @@ fn key(key: &keyboard::Key) -> Key {
 }
 
 fn modifiers(modifiers: keyboard::Modifiers) -> Modifiers {
-    Modifiers {
-        ctrl: modifiers.control(),
-        alt: modifiers.alt(),
-        shift: modifiers.shift(),
-        logo: modifiers.logo(),
-    }
+    Modifiers::new(
+        modifiers.control(),
+        modifiers.alt(),
+        modifiers.shift(),
+        modifiers.logo(),
+    )
 }
 
 /// Returns whether `event` means Back under [`Convention::CURRENT`].

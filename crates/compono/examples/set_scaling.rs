@@ -1,4 +1,6 @@
-//! Measures whether `ChildSet` reconciliation stays linear in the child count.
+//! Measures whether `ChildSet` reconciliation stays linear in the child count, and
+//! whether a named child (`Cx::child_keyed`) costs the same however many siblings
+//! it has.
 
 #![allow(clippy::unwrap_used, reason = "a measurement may stop on failure")]
 
@@ -51,16 +53,52 @@ fn measure(size: u32) {
     tree.send(list, reversed).unwrap();
     let reorder = per_row(start);
     let start = Instant::now();
-    tree.send(list, tail).unwrap();
+    tree.send(list, tail.clone()).unwrap();
     let remove_half = per_row(start);
+    // `reconcile` reads the whole list, so one new row costs as much as the set.
+    let mut one_more = tail;
+    one_more.push((size, Phase::Visible));
+    let start = Instant::now();
+    tree.send(list, one_more).unwrap();
+    let add_one = start.elapsed().as_micros();
     println!(
         "{size:>8} children: create {create} ns, unchanged {unchanged} ns, \
-         reverse {reorder} ns, remove half {remove_half} ns (per child)"
+         reverse {reorder} ns, remove half {remove_half} ns (per child), \
+         add one {add_one} µs (whole call)"
     );
+}
+
+/// Creates the children named by its message, one by one.
+struct Named {
+    rows: Vec<Handle<Row>>,
+}
+
+impl Component for Named {
+    type Msg = Vec<String>;
+    type Output = ();
+    fn update(&mut self, names: Vec<String>, cx: &mut Cx<'_, Self>) {
+        for name in &names {
+            let row = cx.child_keyed(name, |_cx| Row, |_named, (), _cx| {});
+            self.rows.push(row);
+        }
+    }
+}
+
+fn measure_named(size: u32) {
+    let mut tree = Tree::new(NullHost);
+    let named = tree.mount(|_cx| Named { rows: Vec::new() });
+    let names: Vec<String> = (0..size).map(|index| format!("row {index}")).collect();
+    let start = Instant::now();
+    tree.send(named, names).unwrap();
+    let per_child = start.elapsed().as_nanos() / u128::from(size);
+    println!("{size:>8} named children: create {per_child} ns (per child)");
 }
 
 fn main() {
     for size in [1_000, 10_000, 100_000, 1_000_000] {
         measure(size);
+    }
+    for size in [1_000, 10_000, 50_000] {
+        measure_named(size);
     }
 }

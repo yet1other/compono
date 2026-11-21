@@ -24,6 +24,7 @@ pub enum SwipeEdge {
 
 /// One moment of a Back gesture.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BackEvent {
     /// How far the gesture has gone, `0..=1`.
     pub progress: f32,
@@ -34,8 +35,21 @@ pub struct BackEvent {
     pub touch_y: f32,
 }
 
+impl BackEvent {
+    /// A gesture `progress` of the way from `edge`, with the touch `touch_y` down.
+    #[must_use]
+    pub const fn new(progress: f32, edge: SwipeEdge, touch_y: f32) -> Self {
+        Self {
+            progress,
+            edge,
+            touch_y,
+        }
+    }
+}
+
 /// The two entries a stack draws during a Back gesture.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct StackFrame {
     /// The entry Back reveals, drawn first.
     pub under: LayerStyle,
@@ -45,6 +59,7 @@ pub struct StackFrame {
 
 /// How a stack follows a Back gesture.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum BackAnimation {
     /// iOS interactive pop: the top entry follows the finger to the right, and the
     /// one under it moves from `-parallax` of the width to 0, dimmed by up to `dim`.

@@ -154,3 +154,37 @@ fn shared_axis_uses_the_size_it_was_given() {
     state.start(StackChange::Forward { from: 0, to: 1 }, motion, 0.0);
     close(state.frame(0.0).over.style.offset_x, 0.1);
 }
+
+/// 5-5: a clock out of range ends the transition instead of freezing it.
+#[test]
+fn a_clock_out_of_range_ends_the_transition() {
+    use compono_motion::{Motion, StackChange, TransitionState};
+    for (start, later) in [
+        (1e17, 1e17 + 0.016),
+        (f64::NAN, f64::NAN),
+        (1.0, f64::INFINITY),
+        (1.0, f64::NAN),
+        (f64::INFINITY, f64::INFINITY),
+    ] {
+        let mut state = TransitionState::new(0);
+        state.start(
+            StackChange::Forward { from: 0, to: 1 },
+            Motion::material(),
+            start,
+        );
+        let frame = state.frame(later);
+        assert!(
+            frame.under.is_none(),
+            "start {start}, later {later}: still running"
+        );
+        assert_eq!(frame.over.key, 1);
+    }
+    // In range, the same push runs.
+    let mut state = TransitionState::new(0);
+    state.start(
+        StackChange::Forward { from: 0, to: 1 },
+        Motion::material(),
+        1e9,
+    );
+    assert!(state.frame(1e9 + 0.016).under.is_some());
+}

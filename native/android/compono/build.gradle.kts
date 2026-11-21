@@ -49,12 +49,12 @@ tasks.withType<Test>().configureEach {
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()
-    coordinates("io.github.yet300", "compono", componoVersion)
+    coordinates("io.github.yet1other", "compono", componoVersion)
     pom {
         name.set("Compono")
         description.set("Jetpack Compose views for Compono component trees: routers, lifecycle, Back gestures and transitions.")
         inceptionYear.set("2026")
-        url.set("https://github.com/yet300/compono")
+        url.set("https://github.com/yet1other/compono")
         licenses {
             license {
                 name.set("Apache-2.0")
@@ -64,15 +64,15 @@ mavenPublishing {
         }
         developers {
             developer {
-                id.set("yet300")
-                name.set("yet300")
-                url.set("https://github.com/yet300")
+                id.set("yet1other")
+                name.set("yet1other")
+                url.set("https://github.com/yet1other")
             }
         }
         scm {
-            url.set("https://github.com/yet300/compono")
-            connection.set("scm:git:https://github.com/yet300/compono.git")
-            developerConnection.set("scm:git:ssh://git@github.com/yet300/compono.git")
+            url.set("https://github.com/yet1other/compono")
+            connection.set("scm:git:https://github.com/yet1other/compono.git")
+            developerConnection.set("scm:git:ssh://git@github.com/yet1other/compono.git")
         }
     }
 }

@@ -244,8 +244,8 @@ impl Persist for Draft {
   unique among one parent's children; a repeated name saves nothing, and the host
   receives `Diagnostic::RepeatedChildName`.
 - A plain child that has saved descendants needs a name too: `cx.child_keyed`.
-- Give every `Persist` type a `KIND`, a name unique in the app and the same in
-  every version. Saved state records it, and `cx.restored()` gives `None` for
+- Every `Persist` type names its `KIND`, a name unique in the app and the same in
+  every version. It has no default, and an empty one does not build. Saved state records it, and `cx.restored()` gives `None` for
   state another kind saved at the same place, or for bytes left over after the
   value.
 - When one component's `Saved` changes shape, raise its `VERSION` and read the

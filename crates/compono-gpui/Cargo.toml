@@ -1,9 +1,11 @@
 [package]
 name = "compono-gpui"
 description = "Connects a Compono tree to GPUI"
-version.workspace = true
+version = "0.1.0-rc"
 edition.workspace = true
-rust-version.workspace = true
+# Its own minimum, checked by CI. It cannot be lower than `compono`'s, and GPUI
+# (`gpui-pre =0.3.12`) builds with it. Raise it on its own when GPUI needs more.
+rust-version = "1.96"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"

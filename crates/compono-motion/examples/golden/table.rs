@@ -85,15 +85,9 @@ pub fn table() -> String {
                 }
             }
             let back = |progress, edge, touch_y, finish| {
-                motion.back.frame(
-                    BackEvent {
-                        progress,
-                        edge,
-                        touch_y,
-                    },
-                    finish,
-                    SIZE,
-                )
+                motion
+                    .back
+                    .frame(BackEvent::new(progress, edge, touch_y), finish, SIZE)
             };
             let mut gesture = |section, x: f32, frame: compono_motion::StackFrame| {
                 row(

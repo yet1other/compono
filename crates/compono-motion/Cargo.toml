@@ -12,5 +12,8 @@ categories = ["gui", "no-std"]
 
 [dependencies]
 
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

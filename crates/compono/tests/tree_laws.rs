@@ -83,7 +83,9 @@ impl Component for Parent {
                 self.kids.push(cx.child(|_cx| kid, |_parent, (), _cx| {}));
             }
             ParentMsg::Remove(index) => cx.destroy(self.kids.remove(index)).unwrap(),
-            ParentMsg::Grant(index, phase) => cx.set_child_phase(self.kids[index], phase).unwrap(),
+            ParentMsg::Grant(index, phase) => {
+                cx.set_child_phase(self.kids[index], phase).unwrap();
+            }
         }
     }
 }
@@ -192,6 +194,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = [u8; 32];
+    const KIND: &'static str = "tree_laws.cell";
     fn save(&self) -> [u8; 32] {
         MARK
     }
@@ -242,6 +245,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = SavedStack<u8>;
+    const KIND: &'static str = "tree_laws.screens";
     fn save(&self) -> SavedStack<u8> {
         self.stack.snapshot()
     }

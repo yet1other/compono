@@ -97,6 +97,36 @@ pub(crate) const fn numbered_child(number: u64) -> u64 {
     }
 }
 
+/// The router a saved key belongs to, when it is the key of a router entry.
+#[cfg(feature = "serde")]
+pub(crate) enum RouterOf {
+    /// The numbered router with this number.
+    Numbered(u16),
+    /// The named router with this base, as [`named_router`] gives it.
+    Named(u64),
+}
+
+/// Returns the router whose entry has the key `key`, if it is a saved entry key.
+#[cfg(feature = "serde")]
+pub(crate) const fn router_of(key: u64) -> Option<RouterOf> {
+    if key >> 63 == 0 {
+        let number = (key >> ROUTER_SHIFT) as u16;
+        if number >= UNSAVED_ROUTER {
+            return None;
+        }
+        return Some(RouterOf::Numbered(number));
+    }
+    if key & TAG_MASK == NAMED_ROUTER_TAG {
+        return Some(RouterOf::Named(key & !NAMED_ENTRY_MASK));
+    }
+    None
+}
+
+/// Returns whether `key`, a key of a child, is the key of a named child.
+pub(crate) const fn is_named_child(key: u64) -> bool {
+    key & NAMED_CHILD_TAG == NAMED_CHILD_TAG
+}
+
 /// Returns the key of a child named `name`.
 pub(crate) const fn named_child(name: &str) -> u64 {
     NAMED_CHILD_TAG | (fnv1a(FNV_OFFSET, name.as_bytes()) >> 2)

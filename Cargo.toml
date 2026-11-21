@@ -7,7 +7,7 @@ version = "1.0.0-rc"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
-repository = "https://github.com/yet300/compono"
+repository = "https://github.com/yet1other/compono"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

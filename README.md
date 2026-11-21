@@ -46,25 +46,33 @@ devices have not been tested.
 
 ## Install
 
-Pin the release candidate exactly, since it can still change before `1.0.0`:
+Pin the release candidate exactly, since it can still change before `1.0.0`. The
+egui, iced and GPUI adapters have their own versions, below `1.0.0` while their
+toolkits are, so a toolkit release never forces a new major version of the core
+(`VERSIONING.md`):
 
 ```toml
 [dependencies]
 compono = "=1.0.0-rc"
-compono-egui = "=1.0.0-rc" # or compono-iced, compono-gpui, compono-ffi
+compono-ffi = "=1.0.0-rc"  # for SwiftUI or Compose
+compono-egui = "=0.1.0-rc" # or compono-iced, compono-gpui
 ```
 
 A Swift application adds the package by URL:
 
 ```swift
-.package(url: "https://github.com/yet300/compono", exact: "1.0.0-rc")
+.package(url: "https://github.com/yet1other/compono", exact: "1.0.0-rc")
 ```
 
 An Android application adds the Compose library from Maven Central:
 
 ```kotlin
-implementation("io.github.yet300:compono:1.0.0-rc")
+implementation("io.github.yet1other:compono:1.0.0-rc")
 ```
+
+The group was `io.github.yet300` until the repository moved. The artifact
+`io.github.yet300:compono:1.0.0-rc` stays on Maven Central, and
+`io.github.yet1other:compono` replaces it from this release on.
 
 ## Layout
 
@@ -85,6 +93,23 @@ implementation("io.github.yet300:compono:1.0.0-rc")
 | `examples/showcase-egui`, `-iced`, `-gpui` | The same screens on each UI |
 | `examples/showcase-web` | The egui showcase in a browser |
 | `skills/` | Agent skills for applications that use Compono |
+
+## Benchmarks
+
+`benchmarks/run.sh` runs both benchmarks; `benchmarks/RESULTS.md` lists the raw
+output behind each published table, the machine and the date.
+
+- `benchmarks/decompose-comparison` runs Compono as a native Rust program on every
+  platform, so its numbers do not include the FFI boundary. A Compose or SwiftUI
+  application adds the boundary cost measured in `benchmarks/ffi-boundary`, about
+  136 ns for a message and its commit on the Android emulator and 68 ns on the iOS
+  simulator. Decompose runs on the JVM, Kotlin/Native and ART.
+- `benchmarks/ffi-boundary` measures only the boundary: native code calling Rust
+  through BoltFFI and UniFFI, with the same Rust behind both.
+- Memory per stack entry is measured differently on each side. Compono counts the
+  bytes its global allocator holds before and after 10 000 pushes. Decompose reads
+  `Runtime.totalMemory() - freeMemory()` on the JVM and ART, which includes garbage
+  not yet collected, so it is an estimate. Kotlin/Native memory is not measured.
 
 ## Running
 

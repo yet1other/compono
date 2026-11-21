@@ -25,6 +25,7 @@ impl Component for Cell {
 
 impl Persist for Cell {
     type Saved = u32;
+    const KIND: &'static str = "rebuilt_restored.cell";
     fn save(&self) -> u32 {
         self.0
     }
@@ -84,6 +85,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = Option<SavedStack<u32>>;
+    const KIND: &'static str = "rebuilt_restored.screens";
     fn save(&self) -> Self::Saved {
         self.stack.as_ref().map(Stack::snapshot)
     }
@@ -176,6 +178,7 @@ impl Component for Cards {
 
 impl Persist for Cards {
     type Saved = SavedChildSet<u32>;
+    const KIND: &'static str = "rebuilt_restored.cards";
     fn save(&self) -> Self::Saved {
         self.set.as_ref().unwrap().snapshot()
     }

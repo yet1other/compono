@@ -35,6 +35,7 @@ impl Component for Leaf {
 
 impl Persist for Leaf {
     type Saved = u32;
+    const KIND: &'static str = "saved_routers.leaf";
     fn save(&self) -> u32 {
         self.value
     }
@@ -66,6 +67,7 @@ impl Component for Feed {
 
 impl Persist for Feed {
     type Saved = SavedItems<u32>;
+    const KIND: &'static str = "saved_routers.feed";
     fn save(&self) -> SavedItems<u32> {
         self.items.snapshot()
     }
@@ -159,6 +161,7 @@ impl Component for Screen {
 
 impl Persist for Screen {
     type Saved = SavedPanels<u32, u32, u32>;
+    const KIND: &'static str = "saved_routers.screen";
     fn save(&self) -> Self::Saved {
         self.panels.snapshot()
     }

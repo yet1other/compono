@@ -8,6 +8,8 @@ private struct ComponoLifecycle: ViewModifier {
     let tree: ComponoTree
     let onBackground: (Data) -> Void
     @Environment(\.scenePhase) private var scenePhase
+    /// Names this scene among the others that show the same tree.
+    @State private var scene = UUID()
 
     #if os(iOS)
     @State private var tracking = false
@@ -56,20 +58,25 @@ private struct ComponoLifecycle: ViewModifier {
     }
     #endif
 
+    /// Reports this scene's phase. The tree takes the highest phase of all scenes,
+    /// so one window going to the background does not hide what another shows.
+    /// State is saved whenever a scene goes to the background.
     private func tracked(_ content: Content) -> some View {
-        content.onChange(of: scenePhase, initial: true) { _, phase in
-            switch phase {
-            case .active:
-                tree.setPhase(2)
-            case .inactive:
-                tree.setPhase(1)
-            case .background:
-                tree.setPhase(0)
-                onBackground(tree.save())
-            @unknown default:
-                tree.setPhase(1)
+        content
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                switch phase {
+                case .active:
+                    tree.setScenePhase(2, for: scene)
+                case .inactive:
+                    tree.setScenePhase(1, for: scene)
+                case .background:
+                    tree.setScenePhase(0, for: scene)
+                    onBackground(tree.save())
+                @unknown default:
+                    tree.setScenePhase(1, for: scene)
+                }
             }
-        }
+            .onDisappear { tree.removeScene(scene) }
     }
 }
 

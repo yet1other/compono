@@ -4,55 +4,145 @@ on:
   push:
   pull_request:
 
+# Every action is pinned to a commit, with its version beside it. Every cargo
+# command uses the lock file.
+
 jobs:
   core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           components: clippy, rustfmt
           targets: thumbv7em-none-eabihf, wasm32-unknown-unknown
       - run: cargo fmt --all --check
       - run: scripts/sync-skills.sh --check
-      - run: cargo clippy -p compono -p compono-test -p compono-tokio -p showcase --all-targets -- -D warnings
-      - run: cargo clippy -p compono --no-default-features -- -D warnings
-      - run: cargo clippy -p compono --no-default-features --features std -- -D warnings
-      - run: cargo clippy -p compono --no-default-features --features serde -- -D warnings
-      # The allocation budget is enforced by crates/compono/tests/allocations.rs.
-      - run: cargo test -p compono -p compono-test -p compono-tokio -p showcase
-      - run: cargo test -p compono --no-default-features
-      - run: cargo test -p compono --test loom --release
+      - run: cargo clippy --locked -p compono -p compono-motion -p compono-test -p compono-tokio -p showcase --all-targets -- -D warnings
+      - run: cargo clippy --locked -p compono --no-default-features -- -D warnings
+      - run: cargo clippy --locked -p compono --no-default-features --features std -- -D warnings
+      - run: cargo clippy --locked -p compono --no-default-features --features serde -- -D warnings
+      - run: cargo test --locked -p compono -p compono-motion -p compono-test -p compono-tokio -p showcase
+      - run: cargo test --locked -p compono --no-default-features
+      # The allocation budget is enforced by crates/compono/tests/allocations.rs,
+      # and the memory of the 100 000-row feed by examples/showcase/tests/load_memory.rs.
+      - run: cargo test --locked --release -p compono --test allocations
+      - run: cargo test --locked --release -p showcase --test load_memory
+      - run: cargo test --locked -p compono --test loom --release
         env:
           RUSTFLAGS: --cfg loom
           CARGO_TARGET_DIR: target/loom
-      - run: cargo check -p compono --no-default-features --target thumbv7em-none-eabihf
-      - run: cargo check -p compono --no-default-features --features serde --target thumbv7em-none-eabihf
-      - run: cargo check -p compono --target wasm32-unknown-unknown
-      - run: cargo clippy -p compono-desktop -p compono-web --all-targets -- -D warnings
-      - run: cargo test -p compono-desktop -p compono-web
-      - run: cargo clippy -p compono-web -p showcase-web --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo check --locked -p compono --no-default-features --target thumbv7em-none-eabihf
+      - run: cargo check --locked -p compono --no-default-features --features serde --target thumbv7em-none-eabihf
+      - run: cargo check --locked -p compono-motion --target thumbv7em-none-eabihf
+      - run: cargo check --locked -p compono --target wasm32-unknown-unknown
+      - run: cargo clippy --locked -p compono-desktop -p compono-web --all-targets -- -D warnings
+      - run: cargo test --locked -p compono-desktop -p compono-web
+      - run: cargo clippy --locked -p compono-web -p showcase-web --target wasm32-unknown-unknown -- -D warnings
 
-  # The minimum Rust version that `VERSIONING.md` promises.
-  msrv:
+  audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  # The minimum Rust version of every published crate, as its manifest sets it:
+  # the workspace's for the core crates and the egui and iced adapters, and
+  # `compono-gpui`'s own. macOS, because GPUI builds there without extra libraries.
+  msrv:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - toolchain: "1.96"
+            crates: >-
+              -p compono -p compono-motion -p compono-test -p compono-tokio
+              -p compono-desktop -p compono-web -p compono-ffi
+              -p compono-egui -p compono-iced
+          # crates/compono-gpui/Cargo.toml, `rust-version`.
+          - toolchain: "1.96"
+            crates: -p compono-gpui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ matrix.toolchain }}
           targets: wasm32-unknown-unknown
-      - run: cargo check -p compono -p compono-test -p compono-tokio -p compono-desktop -p compono-web -p compono-ffi
-      - run: cargo check -p compono-web --target wasm32-unknown-unknown
+      - run: cargo test --locked ${{ matrix.crates }}
+      - run: cargo check --locked -p compono-web --target wasm32-unknown-unknown
 
   workspace:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           components: clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: cargo doc --workspace --no-deps
+          targets: aarch64-linux-android, aarch64-apple-ios
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo doc --locked --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      # The Rust side of native UIs, for one Android and one iOS target.
+      - run: cargo build --locked -p compono-ffi --target aarch64-linux-android
+      - run: cargo build --locked -p compono-ffi --target aarch64-apple-ios
+
+  # Windows is a supported desktop, GPUI included (`gpui-pre-windows`).
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - run: cargo test --locked --workspace
+
+  # The Swift package, after building the showcase's bindings as compono-native says.
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+      - run: cargo install boltffi_cli --version 0.32.1 --locked
+      - run: boltffi pack apple --release --deny-skipped
+        working-directory: native/showcase/ffi
+      - run: swift test
+        working-directory: native/apple/Compono
+
+  # The Compose library's unit tests, after building the showcase's bindings.
+  android:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android, i686-linux-android
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: "9.8.1"
+      - run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
+      - run: cargo install boltffi_cli --version 0.32.1 --locked
+      - run: boltffi pack android --release --deny-skipped
+        working-directory: native/showcase/ffi
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+      - run: gradle :compono:testDebugUnitTest
+        working-directory: native/showcase/android

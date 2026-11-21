@@ -57,7 +57,8 @@ impl ArticlesComponent {
             .read::<Articles, _>(self.node, |articles| match articles.panels.mode() {
                 PanelsMode::Single => PanelsLayout::Single,
                 PanelsMode::Dual => PanelsLayout::Dual,
-                PanelsMode::Triple => PanelsLayout::Triple,
+                // `Triple`, and any mode a later version adds, shows every panel.
+                _ => PanelsLayout::Triple,
             })
     }
 

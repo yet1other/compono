@@ -8,6 +8,7 @@ use crate::transition::Transition;
 
 /// One entry to draw: its key, its role and its style.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Layer {
     pub key: u64,
     pub direction: Direction,
@@ -16,6 +17,7 @@ pub struct Layer {
 
 /// The entries to draw at one moment, bottom first.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Frame {
     /// The back entry, while a transition runs.
     pub under: Option<Layer>,
@@ -44,6 +46,9 @@ struct Running {
     v: f32,
     integrated: f32,
 }
+
+/// The largest clock reading that moves a transition (see [`TransitionState::frame`]).
+const MAX_CLOCK_SECS: f64 = 1_099_511_627_776.0;
 
 /// The running transition of one router. An adapter keeps one per router.
 ///
@@ -116,6 +121,12 @@ impl TransitionState {
 
     /// Returns the layers to draw at `now_secs`, and ends the transition once its
     /// timing has finished.
+    ///
+    /// Motion is correct for clock readings within 2⁴⁰ seconds (about 34 800
+    /// years) of the clock's origin, where an `f64` still tells apart times a
+    /// quarter of a millisecond apart. When `now_secs` or the start of the
+    /// transition is past that range, or not finite, the transition goes to its
+    /// end state at once.
     pub fn frame(&mut self, now_secs: f64) -> Frame {
         let rest = Frame {
             under: None,
@@ -128,6 +139,13 @@ impl TransitionState {
         let Some(running) = self.running.as_mut() else {
             return rest;
         };
+        // Past the range, a frame's time is lost in the `f64`, and a transition
+        // would freeze between its start and its end (5-5).
+        let in_range = |secs: f64| secs.abs() <= MAX_CLOCK_SECS;
+        if !in_range(now_secs) || !in_range(running.start) {
+            self.running = None;
+            return rest;
+        }
         // Seconds since the start as `f32`: transitions last seconds, not years.
         #[expect(
             clippy::cast_possible_truncation,

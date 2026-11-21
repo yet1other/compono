@@ -161,6 +161,7 @@ impl Component for Screens {
 
 impl Persist for Screens {
     type Saved = SavedStack<u8>;
+    const KIND: &'static str = "properties.screens";
     fn save(&self) -> SavedStack<u8> {
         self.stack.snapshot()
     }

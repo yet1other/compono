@@ -52,7 +52,7 @@ impl Component for Root {
         let target = |target| self.target(target);
         self.result = Some(match msg {
             Msg::Destroy(which) => cx.destroy(target(which)),
-            Msg::Lower(which) => cx.set_child_phase(target(which), Phase::Hidden),
+            Msg::Lower(which) => cx.set_child_phase(target(which), Phase::Hidden).map(drop),
         });
     }
 }

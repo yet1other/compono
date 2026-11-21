@@ -58,6 +58,7 @@ impl Component for Leaf {
 #[cfg(feature = "serde")]
 impl Persist for Leaf {
     type Saved = u32;
+    const KIND: &'static str = "routers.leaf";
     fn save(&self) -> u32 {
         self.name * 100
     }
@@ -264,6 +265,7 @@ mod persistence {
 
     impl Persist for Stored {
         type Saved = u32;
+        const KIND: &'static str = "routers.stored";
         fn save(&self) -> u32 {
             self.value
         }
@@ -301,6 +303,7 @@ mod persistence {
 
     impl Persist for Durable {
         type Saved = Saved;
+        const KIND: &'static str = "routers.durable";
         fn save(&self) -> Saved {
             Saved {
                 slot: self.slot.snapshot(),

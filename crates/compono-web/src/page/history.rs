@@ -1,4 +1,4 @@
-use crate::history::{Browser, EntryState};
+use crate::history::{Browser, EntryState, Refused};
 use js_sys::Array;
 use wasm_bindgen::JsValue;
 
@@ -50,9 +50,9 @@ fn decode(value: &JsValue) -> Option<EntryState> {
 
 /// The page's real history, for [`History`](crate::history::History).
 ///
-/// Errors from the browser, such as a refused `pushState`, leave history as it
-/// was. The next [`History::sync`](crate::history::History::sync) does not
-/// retry them.
+/// A `pushState` or `replaceState` the browser refuses, as it does when they come
+/// too often, is reported as [`Refused`], and the next
+/// [`History::sync`](crate::history::History::sync) writes the entry again.
 #[derive(Clone, Debug)]
 pub struct BrowserHistory {
     history: web_sys::History,
@@ -111,18 +111,18 @@ pub(crate) fn state_of(value: &JsValue) -> Option<EntryState> {
 }
 
 impl Browser for BrowserHistory {
-    fn push(&mut self, path: &str, state: EntryState) {
+    fn push(&mut self, path: &str, state: EntryState) -> Result<(), Refused> {
         let url = self.url(path);
-        let _refused = self
-            .history
-            .push_state_with_url(&encode(state), "", Some(&url));
+        self.history
+            .push_state_with_url(&encode(state), "", Some(&url))
+            .map_err(|_error| Refused)
     }
 
-    fn replace(&mut self, path: &str, state: EntryState) {
+    fn replace(&mut self, path: &str, state: EntryState) -> Result<(), Refused> {
         let url = self.url(path);
-        let _refused = self
-            .history
-            .replace_state_with_url(&encode(state), "", Some(&url));
+        self.history
+            .replace_state_with_url(&encode(state), "", Some(&url))
+            .map_err(|_error| Refused)
     }
 
     fn go(&mut self, delta: i32) {

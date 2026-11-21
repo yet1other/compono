@@ -2,6 +2,7 @@
 
 /// What changed in a stack, from the keys of its entries before and after.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StackChange {
     /// The active entry is the same.
     None,

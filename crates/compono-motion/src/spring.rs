@@ -10,7 +10,14 @@ pub(crate) const LIMIT: f32 = 10.0;
 pub(crate) const SETTLED: f32 = 1e-3;
 
 /// A spring from 0 to 1 with mass 1, as Compose and Material give it.
+///
+/// The damping ratio is used in `0..=`[`Spring::MAX_DAMPING_RATIO`] and the
+/// stiffness in `0..=`[`Spring::MAX_STIFFNESS`]: a value above the range takes its
+/// top, a negative one its bottom, a NaN damping ratio is 1 and a NaN stiffness
+/// is 0. A spring with no stiffness stays where it starts. Inside the range the
+/// fixed one-millisecond step is stable, so every position is finite.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Spring {
     /// 1 is critically damped; below 1 overshoots.
     pub damping_ratio: f32,
@@ -19,6 +26,41 @@ pub struct Spring {
 }
 
 impl Spring {
+    /// The highest stiffness used, in 1/s²: a response of 20 ms, faster than a
+    /// frame. A stiffer spring would make the one-millisecond step diverge.
+    pub const MAX_STIFFNESS: f32 = 100_000.0;
+    /// The highest damping ratio used. Stronger damping at the highest stiffness
+    /// would make the one-millisecond step diverge.
+    pub const MAX_DAMPING_RATIO: f32 = 4.0;
+
+    /// Creates a spring from its damping ratio and stiffness, brought into range.
+    #[must_use]
+    pub const fn new(damping_ratio: f32, stiffness: f32) -> Self {
+        Self {
+            damping_ratio,
+            stiffness,
+        }
+        .clamped()
+    }
+
+    /// The spring that is integrated: every field in its range.
+    const fn clamped(self) -> Self {
+        let damping_ratio = if self.damping_ratio.is_nan() {
+            1.0
+        } else {
+            self.damping_ratio.clamp(0.0, Self::MAX_DAMPING_RATIO)
+        };
+        let stiffness = if self.stiffness.is_nan() {
+            0.0
+        } else {
+            self.stiffness.clamp(0.0, Self::MAX_STIFFNESS)
+        };
+        Self {
+            damping_ratio,
+            stiffness,
+        }
+    }
+
     /// Material 3 standard default spatial spring: damping 0.9, stiffness 700.
     /// Source: `SpringDefaultSpatialDamping` and `SpringDefaultSpatialStiffness` in
     /// `StandardMotionTokens.kt`, Compose Material 3 1.10.0-alpha05.
@@ -41,10 +83,7 @@ impl Spring {
         } else {
             0.0
         };
-        Self {
-            damping_ratio,
-            stiffness: omega * omega,
-        }
+        Self::new(damping_ratio, omega * omega)
     }
 
     /// Returns the position and velocity `t` seconds after leaving 0 toward 1 with
@@ -58,10 +97,14 @@ impl Spring {
     /// 0.1 % of its target. A spring that has not settled after 10 seconds gives 10.
     #[must_use]
     pub fn settle_time(self) -> f32 {
+        let spring = self.clamped();
+        if spring.stiffness <= 0.0 {
+            return LIMIT;
+        }
         let (mut x, mut v, mut t, mut last_out) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         // 10 000 steps of one millisecond, so the loop is bounded.
         for _ in 0..steps(LIMIT) {
-            (x, v) = self.step(x, v, STEP);
+            (x, v) = spring.step(x, v, STEP);
             t += STEP;
             if (x - 1.0).abs() > SETTLED || x.is_nan() {
                 last_out = t;
@@ -76,18 +119,19 @@ impl Spring {
 
     /// Advances `(x, v)` by `t` seconds, at most `LIMIT`, in fixed steps.
     pub(crate) fn advance(self, x: f32, v: f32, t: f32) -> (f32, f32) {
-        if self.stiffness.is_nan() || self.stiffness <= 0.0 {
+        let spring = self.clamped();
+        if spring.stiffness <= 0.0 || !x.is_finite() || !v.is_finite() {
             return (x, v);
         }
         let t = if t > LIMIT { LIMIT } else { t };
         let whole = steps(t);
         let (mut x, mut v) = (x, v);
         for _ in 0..whole {
-            (x, v) = self.step(x, v, STEP);
+            (x, v) = spring.step(x, v, STEP);
         }
         let rest = t - whole as f32 * STEP;
         if rest > 0.0 {
-            (x, v) = self.step(x, v, rest);
+            (x, v) = spring.step(x, v, rest);
         }
         (x, v)
     }

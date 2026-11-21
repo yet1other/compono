@@ -400,10 +400,18 @@ impl<R: PartialEq + 'static, H: 'static, P: Component> Stack<R, H, P> {
     }
 
     /// Removes every entry equal to `route`, then pushes it as a new visit.
+    ///
+    /// It takes one pass over the stack, however many entries match (3-6), and
+    /// removes them newest first.
     pub fn push_to_front(&mut self, route: R, cx: &mut Cx<'_, P>) {
-        while let Some(position) = self.position_of(&route) {
-            let parked = self.parked.remove(position);
-            self.discard(parked, cx);
+        if self.position_of(&route).is_some() {
+            let removed: Vec<Parked<R, H>> = self
+                .parked
+                .extract_if(.., |entry| entry.route == route)
+                .collect();
+            for parked in removed.into_iter().rev() {
+                self.discard(parked, cx);
+            }
         }
         if self.active.route == route {
             let _old = self.replace(route, cx);

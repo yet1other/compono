@@ -1,7 +1,142 @@
 # Changelog
 
-All crates of the workspace share one version. `VERSIONING.md` says what a version
-number promises.
+The core crates share one version, and the egui, iced and GPUI adapters have their
+own. `VERSIONING.md` says what a version number promises.
+
+## Unreleased
+
+Fixes from the review of `1.0.0-rc`. Each entry names the review's ID.
+
+### Changed
+
+- 4-1: `NodeId::to_bits` packs the identity of the tree that issued the address
+  (12 bits), the slot's generation (24 bits) and its index (28 bits). Bits from
+  `1.0.0-rc` name no component. Up to 4 094 trees can be alive at once; a tree
+  made past that is poisoned from the start, and `Tree::is_poisoned` says so. A slot retires at its 16 777 215th generation.
+
+- 2-1: `SaveError` is a `#[non_exhaustive]` enum with `Encode` and `Poisoned`.
+- 2-1: `NativeTree::read` returns `NativeError::Poisoned` on a poisoned tree.
+- 2-1: An empty result of `TreeBridge.save` in the Swift package and the Compose
+  library means the save failed, and the last saved state is kept.
+
+- 4-4: `Persist::KIND` has no default. Every implementation names one, and an
+  empty name fails to build where the component is made persistent. Bytes saved
+  by a component with the old empty kind are not restored by one with a name.
+- 4-7: `compono-egui`, `compono-iced` and `compono-gpui` have versions of their
+  own, starting at `0.1.0-rc`, below `1.0.0` while their toolkits are. A toolkit
+  release raises only that adapter's minor version. The other crates keep one
+  version.
+- 5-2: `Browser::push` and `Browser::replace` in `compono_web::history` return
+  `Result<(), Refused>`, with the new `Refused` error.
+- 6-1: `ComponoTree.detach()` in the Compose library disconnects the bindings;
+  `retainedTree` calls it before closing them.
+- 6-3: Every `TreeBridge` method of the Swift package may throw, and the
+  package logs the error and answers as if no tree were attached. The Compose
+  library catches and logs exceptions from `TreeBridge` the same way.
+- 6-4: `TreeBridge` has `collectRetired`, a static requirement in Swift and a
+  provided method in Kotlin (`treeBridge(..., collectRetired = …)`), which both
+  packages call at every pump.
+- 5-3: `Spring::new`, `Spring::MAX_STIFFNESS` and `Spring::MAX_DAMPING_RATIO`.
+- 4-5: `Cx::set_child_phase` returns `Result<Phase, NotOwnChild>`, the phase the
+  child has now, which is never above the parent's. Before, it returned `Ok(())`
+  when it limited the grant.
+- 4-8: These are `#[non_exhaustive]`, so a later minor release can add a variant
+  or a field: in `compono-motion`, `Easing`, `Transition`, `Timing`,
+  `BackAnimation`, `MotionPreference`, `StackChange`, `Motion`, `LayerStyle`,
+  `BackEvent`, `StackFrame`, `Layer`, `Frame` and `Spring`; in `compono`,
+  `PanelsMode` and `router::link::Navigation`; in `compono-test`, `CommitRecord`
+  and `Violation`; in `compono-desktop`, `Modifiers`; in `compono-web`,
+  `history::EntryState`. New constructors make the structs a caller builds:
+  `Navigation::new`, `BackEvent::new`, `Spring::new`, `Modifiers::new` and
+  `EntryState::new`. A `Motion` or `LayerStyle` starts from a preset or
+  `LayerStyle::REST` and has its fields set.
+- 7-1: The repository moved to `github.com/yet1other/compono`. The crates'
+  `repository`, the Swift package URL and the Maven POM (`url`, `scm`,
+  `developer`) name it.
+- 5-4: Saved state has format `0x00c0_0003`: each entry records whether it went
+  unclaimed through a run. Bytes saved by `1.0.0-rc` are still restored.
+- `compono-gpui` sets its own `rust-version`, 1.96, the lowest that builds it, and
+  CI checks it on that toolchain apart from the other crates.
+- 7-1: The Compose library's Maven group is `io.github.yet1other`. The artifact
+  `io.github.yet300:compono:1.0.0-rc` stays on Maven Central and is replaced by
+  `io.github.yet1other:compono`.
+
+### Fixed
+
+- 2-1: `Tree::save` on a poisoned tree returns `SaveError::Poisoned` and calls no
+  `Persist::save`; before, it skipped the component that panicked and saved the
+  rest. `NativeTree::save` returns `NativeError::Poisoned`. Dropping a poisoned
+  tree no longer tells its components they are hidden.
+- 4-3: An output a child emits before it is removed reaches the parent, in order.
+  Before, a child removed while its outputs were still queued lost them, so a
+  "save and close" lost the save. Outputs are dropped only when the parent is
+  removed too.
+- 5-2: A `pushState` or `replaceState` the browser refuses no longer puts
+  `History` out of step with the browser. The model records only accepted
+  entries, and the next `sync` writes the rest, so Back stays in the application.
+- 6-1: On Android, a pump posted before the Activity finished no longer throws
+  `IllegalStateException` on a closed application: `onCleared` detaches the tree
+  first, and a late pump does nothing.
+- 6-2: On iPad, the tree takes the highest phase of all scenes that show it, so a
+  window going to the background no longer hides the tree another window shows.
+- 3-1: `Cx::child_keyed` and `Cx::persistent_child_keyed` cost the same however
+  many children the parent has. A repeated name was found by walking every
+  sibling, about 61 µs per child at 50 000 children; a set of live names now
+  answers it.
+- 3-2: `ChildSet::reconcile` documents that it costs the whole list on every
+  call, and `set_scaling` measures one added row.
+- 2-2: A task started with `Cx::perform` that its executor drops before it
+  finishes, as Tokio does at shutdown, now reports: the host is woken once, the
+  next pump releases its guard, and `Cx::cancel` returns `false` for it. Before,
+  it stayed outstanding for good.
+- 2-3: A `Scope` dropped between operations, for example one the application
+  kept outside the tree, wakes the host once, so the next pump removes its
+  components. Before, they stayed until some other operation ran.
+- 6-3: The native showcase's root methods return the kind of a `NativeError`,
+  which Swift throws and Kotlin raises, instead of `nil` or `false`. No
+  `debug_assert!` runs inside an `extern "C"` function any more, so a misuse no
+  longer stops a debug build.
+- 6-4: A tree whose bindings were released on another thread is freed at the next
+  pump on its own thread, even when no tree is left to pump. `collect_retired`
+  documents that every binding must do this.
+- 6-5: The Compose library's `ComponoTree.commit` catches and logs an exception,
+  which the generated JNI glue would otherwise hide.
+- 5-3: A `Spring` gives finite values for every input. Its damping ratio is used
+  in `0..=Spring::MAX_DAMPING_RATIO` (4) and its stiffness in
+  `0..=Spring::MAX_STIFFNESS` (100 000), and a NaN takes a documented value.
+  Before, a NaN, infinite or negative damping, or a very stiff spring, gave NaN
+  offsets for up to 10 s. The presets do not change.
+- 5-5: `TransitionState::frame` documents the range of clock readings it moves
+  through, 2⁴⁰ seconds from the origin, and a reading past it or not finite ends
+  the transition instead of freezing it halfway.
+- 5-4: `Tree::save` drops restored state only after nothing claimed it for one
+  whole run, from one restore to the next, and keeps for good what a live
+  component or router can still claim, such as a lower stack entry not yet shown.
+  A child created late in a run, even after a save, still restores the earlier
+  run's state. Before, every unclaimed entry was saved again for good.
+- 3-5: `Tree::save` looks up entries of dropped routers in a set, not a list.
+- 4-6: `Tree::send` and `Tree::set_work_limit` document that `send` returns
+  `Ok(())` at the work limit, with the rest of the work left for the next pump,
+  which the host is woken for.
+- 3-3: `crates/compono/tests/allocations.rs` also bounds an output (1), a message
+  and its answer (2), selecting a page (3), scrolling `Items` by a row (4) and
+  opening and closing a details panel or a dialog (1).
+- 3-6: `Stack::push_to_front` removes every equal entry in one pass. Before, it
+  searched the stack again after each removal, quadratic in the matching entries.
+- 3-4: The `navigation_cost` example no longer prints "named stack" rows, which
+  measured the same work as the others; its comment says why.
+- 7-5: `Cargo.lock` takes `heapless` 0.9.4, which GPUI depends on, fixing
+  RUSTSEC-2026-0574 to RUSTSEC-2026-0582. The README of `compono-gpui` lists them.
+- 7-2, 7-3, 7-4, 7-6, 7-7: CI runs the Swift package's tests and the Compose
+  library's unit tests after building the showcase's bindings, tests every
+  published crate on Rust 1.96, checks `compono-motion` for `thumbv7em`, builds
+  `compono-ffi` for Android and iOS, tests the whole workspace on Windows, GPUI included,
+  runs `cargo audit`, the allocation budget and the feed's memory test in release,
+  uses `--locked` for every cargo command and pins every action to a commit.
+- 4-1: A handle or address from one tree no longer reaches the component in the
+  same slot of another tree. Every function that takes a handle or a `NodeId`
+  treats it as stale, and so does `NativeTree` for an address another
+  `NativeTree` issued.
 
 ## 1.0.0-rc
 

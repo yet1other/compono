@@ -1,5 +1,3 @@
-out/
-Cargo.lock
 rust/target/
 kotlin/.gradle/
 kotlin/.kotlin/
