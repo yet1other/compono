@@ -1,0 +1,4 @@
+# Check out text files with LF on every platform. Tests compare files such as
+# `crates/compono-motion/golden/motion.csv` byte for byte, and the Windows
+# runner would otherwise convert them to CRLF.
+* text=auto eol=lf
