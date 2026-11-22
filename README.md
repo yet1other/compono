@@ -70,10 +70,6 @@ An Android application adds the Compose library from Maven Central:
 implementation("io.github.yet1other:compono:1.0.0-rc.2")
 ```
 
-The group was `io.github.yet300` until the repository moved. The artifact
-`io.github.yet300:compono:1.0.0-rc` stays on Maven Central, and
-`io.github.yet1other:compono` replaces it from this release on.
-
 ## Layout
 
 | Path | Contents |
